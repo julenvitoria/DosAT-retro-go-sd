@@ -1917,6 +1917,18 @@ static void sb_start_fmt(uint8_t bits16, uint8_t autoinit, uint8_t stereo,
     if (silent)
         x86_sb_adpcm_silenced++;
     x86_sb_starts++;
+    /* A TINY SINGLE-CYCLE TRANSFER COMPLETES NOW. The engine only runs inside
+       the frame's render, so a 1-byte probe -- the iMUSE drivers' IRQ test
+       (Monkey Island 2, Indy 4 CD: 40h, 14h len 0) -- got its interrupt up to
+       a frame later. A card at 11 kHz takes ~0.1 ms; the driver's wait is a
+       short spin, and it timed out and masked IRQ 5 ("Unable to initialize
+       SoundDriver") or not, depending on where in the frame it ran. 16
+       samples is under 1.5 ms at 11 kHz: nothing audible is dropped. */
+    if (!autoinit && sbp.blk <= 16u) {
+        while (sb_next_sample())
+            ;
+        sb_win_drop();
+    }
 }
 
 static void sb_stop(void)
