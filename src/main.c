@@ -1514,9 +1514,49 @@ volatile uint32_t dsk_errors       = 0;
 
 static FILE *dsk_fp;
 
+/*
+ * A SECOND READ HANDLE, BECAUSE THE SEEK IS THE COST.
+ *
+ * The firmware's FatFs has FF_USE_FASTSEEK 0, so an fseek walks the image's
+ * cluster chain -- forward from where the handle already is, or from byte
+ * zero when the target is behind it. One handle serving a guest filesystem
+ * alternates between the guest's FAT and directories (the start of the image)
+ * and its data (anywhere), so every data read after a FAT lookup walked the
+ * chain from near zero out to the data. On a 192-333 MB talkie image that is
+ * most of the chain, and it showed at tier 2 as seeks costing MORE than the
+ * reads (INDY4CD intro: 3.0 s of dsk_us_seek against 1.8 s of dsk_us_read).
+ * On the console a walk that long outlasts a 16.7 ms audio half, which is then
+ * replayed: the click at the start of a voice line, the moment MONSTER.SOU is
+ * sought.
+ *
+ * So reads at or above DSK_META_BYTES go through a second, read-only handle
+ * that stays out among the data, and the metadata lookups keep dsk_fp near the
+ * start. Images under 1 MB never open it. A write goes through dsk_fp and
+ * closes the second handle first -- its stdio buffer could serve the old bytes
+ * -- and it reopens at the next read. A refused fopen is just one handle. The
+ * state is one pointer on purpose: RAM_EMU is the guest's page pool and the
+ * uncached block is full to its last 12 bytes.
+ *
+ * Tier 2, INDY4CD, the same 36 s with the speech scene: dsk_us_seek 3.00 s ->
+ * 2.48 s. A THIRD handle (two data handles, nearest-below) measured 2.45 s:
+ * no better, and 128 B more of RAM_EMU, so it is not here. gwemu does not time
+ * the card, so whether the click goes is a tier-3 question.
+ */
+#define DSK_META_BYTES (1u << 20)
+static FILE *dsk_fp2;
+
+static void dsk_close_extras(void)
+{
+    if (dsk_fp2) {
+        gw_firmware_abi()->fclose(dsk_fp2);
+        dsk_fp2 = NULL;
+    }
+}
+
 static void dsk_close_file(void)
 {
     const gw_firmware_abi_t *abi = gw_firmware_abi();
+    dsk_close_extras();
     if (dsk_fp) {
         X86_ZONE_ENTER(X86_ZONE_DISK);
         abi->fclose(dsk_fp);
@@ -1569,6 +1609,12 @@ static int sd_sector_read(void *ctx, void *dst, uint32_t offset, uint32_t len)
        inside whatever asked for it (normally HLE), so FatFs's own cluster-chain
        walk stays charged to HLE -- which is correct, that walk is CPU work. */
     X86_ZONE_ENTER(X86_ZONE_DISK);
+    if (offset >= DSK_META_BYTES) {
+        if (!dsk_fp2)
+            dsk_fp2 = abi->fopen((const char *)ctx, "rb");
+        if (dsk_fp2)
+            f = dsk_fp2;
+    }
     uint32_t t0 = DWT_CYCCNT;
     int sought = abi->fseek(f, (long)offset, SEEK_SET);
     uint32_t t1 = DWT_CYCCNT;
@@ -1602,6 +1648,7 @@ static int sd_sector_write(void *ctx, const void *src, uint32_t offset,
 
     if (!f) { dsk_errors++; return -1; }
     X86_ZONE_ENTER(X86_ZONE_DISK);          /* ZONES: see sd_sector_read */
+    dsk_close_extras();     /* their stdio buffers would serve stale bytes */
     uint32_t t0 = DWT_CYCCNT;
     if (abi->fseek(f, (long)offset, SEEK_SET) == 0 &&
         abi->fwrite(src, 1, len, f) == len)
