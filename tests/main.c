@@ -1991,6 +1991,14 @@ volatile uint32_t sbd_pcm[32] __attribute__((section(".test_bss")));
    slack and a new object in front of the 4 KB-aligned test_ram costs a
    whole page. */
 static int16_t sbd_audio[SBD_FRAMES] __attribute__((section(".test_bss")));
+/* The SB output ring (x86_io.c) comes from the host's allocator, which this
+   harness otherwise does not provide: hand it one static 4 KB block. */
+extern void *(*x86_io_alloc)(uint32_t bytes);
+static int16_t sbd_ring[2048] __attribute__((section(".test_bss")));
+static void *sbd_alloc(uint32_t bytes)
+{
+    return bytes <= sizeof(sbd_ring) ? (void *)sbd_ring : (void *)0;
+}
 
 static const uint8_t sbdma_code[] = {
     /* -- fill 4000h..40FFh with a ramp: the guest's OWN data -------------- */
@@ -2154,6 +2162,8 @@ static void sbdma_test_run(void)
            transfer) and then offer the interrupt, in that order and at every
            boundary -- exactly what src/main.c does. */
         memset(sbd_audio, 0, sizeof(sbd_audio));
+        if (!x86_io_alloc)
+            x86_io_alloc = sbd_alloc;
         unsigned got = x86_sb_render_mix(sbd_audio, SBD_FRAMES, SBD_RATE, 32767);
         if (got && !captured) {
             for (unsigned i = 0; i < 32; i++)
@@ -2327,6 +2337,8 @@ static void sbadpcm_test_run(void)
             break;
         }
         memset(sbd_audio, 0, sizeof(sbd_audio));
+        if (!x86_io_alloc)
+            x86_io_alloc = sbd_alloc;
         unsigned got = x86_sb_render_mix(sbd_audio, SBD_FRAMES, SBD_RATE, 32767);
         if (got && !captured) {
             for (unsigned i = 0; i < 32; i++)

@@ -411,7 +411,7 @@ volatile uint32_t x86_spk_log_idx = 0;
  * scripts/probe.py --io-log
  */
 #ifndef X86_IO_LOG_SLOTS
-#define X86_IO_LOG_SLOTS 16   /* 32 -> 16 (2026-10-24): RAM_EMU for the PIT phase */
+#define X86_IO_LOG_SLOTS 8    /* 32 -> 16 (2026-10-24): RAM_EMU for the PIT phase; 16 -> 8 (2026-11-03): the SB ring */
 #endif
 volatile uint32_t x86_io_log[X86_IO_LOG_SLOTS * 2];
 /* The ring's length, published so the decoder follows a diagnostic build
@@ -1839,27 +1839,50 @@ static void sb_dac_render(int16_t *dst, unsigned frames, int16_t amplitude)
  *
  * Returns the number of output samples the SB contributed.
  */
+/*
+ * THE CARD'S OUTPUT GOES THROUGH A SHORT QUEUE, BECAUSE A BLOCK ENDS MID-HALF.
+ *
+ * The transfer advances only here, at the refill. A single-cycle block (0x14)
+ * that ran out half-way through a 16.7 ms half used to leave the REST of that
+ * half silent: the guest takes the IRQ and starts the next block only when it
+ * runs again, after the half was already written. A talkie streams speech as
+ * one such block per chunk, so every chunk boundary was a hole of up to a
+ * half -- the micro-cuts in MI2's voices, ~12 ms inside a word against the
+ * MONSTER.SOU original (owner's recording, 2026-11-03). So samples are made
+ * up to 1.5 halves AHEAD into a ring and the half is mixed from the ring: a
+ * block that ends early leaves the queue to cover the gap, and the next block
+ * fills it back up on the following refill. The DMA simply runs 1-1.5 halves
+ * ahead of the speaker, as a real card's FIFO and buffer do. 4 KB of AHB; if
+ * that allocation is refused the card is mute rather than wrong.
+ */
+#define SB_RING 2048u                   /* int16 samples; > 1.5 x 800 */
+static int16_t *sb_ring;
+static uint32_t sb_ring_w, sb_ring_r;
+
 unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
                            int16_t amplitude)
 {
     sb_dac_render(dst, frames, amplitude);
-    if (!sbp.active || sbp.paused || !sbp.rate || !sample_rate || !frames)
-        return 0;
+    if (!sb_ring && x86_io_alloc)
+        sb_ring = (int16_t *)x86_io_alloc(SB_RING * sizeof(int16_t));
+    if (!sb_ring || !frames || frames > SB_RING / 2u)
+        return 0;                       /* no ring: the card is mute, not wrong */
 
-    uint32_t step = (uint32_t)(((uint64_t)sbp.rate << 16) / sample_rate);
-    if (!step)
-        step = 1;
     unsigned n = 0;
-    for (; n < frames; n++) {
-        while (sbp.frac >= 0x10000u) {
-            sbp.frac -= 0x10000u;
-            if (!sb_next_sample())
-                goto done;
+    if (sbp.active && !sbp.paused && sbp.rate && sample_rate) {
+        uint32_t step = (uint32_t)(((uint64_t)sbp.rate << 16) / sample_rate);
+        if (!step)
+            step = 1;
+        while (sb_ring_w - sb_ring_r < frames + (frames >> 1)) {
+            while (sbp.frac >= 0x10000u) {
+                sbp.frac -= 0x10000u;
+                if (!sb_next_sample())
+                    goto done;
+            }
+            sb_ring[sb_ring_w++ & (SB_RING - 1u)] = sbp.last;
+            n++;
+            sbp.frac += step;
         }
-        int32_t v = ((int32_t)sbp.last * amplitude) >> 15;
-        int32_t o = (int32_t)dst[n] + v;
-        dst[n] = (int16_t)(o > 32767 ? 32767 : (o < -32768 ? -32768 : o));
-        sbp.frac += step;
     }
 done:
     /* The window must not outlive the render: between two calls the pager is
@@ -1867,6 +1890,12 @@ done:
        the guest. Holding it would be the live-pointer hazard exactly. */
     sb_win_drop();
     x86_sb_samples += n;
+    for (unsigned i = 0; i < frames && sb_ring_r != sb_ring_w; i++) {
+        int32_t v = ((int32_t)sb_ring[sb_ring_r++ & (SB_RING - 1u)]
+                     * amplitude) >> 15;
+        int32_t o = (int32_t)dst[i] + v;
+        dst[i] = (int16_t)(o > 32767 ? 32767 : (o < -32768 ? -32768 : o));
+    }
     return n;
 }
 
@@ -2341,6 +2370,7 @@ static void dsp_write_reset(uint8_t v)
        playing under the next one's -- and, worse, would keep pulling DMA from
        an address the guest has since freed. */
     sb_stop();
+    sb_ring_r = sb_ring_w;            /* ...and what it had queued */
     sb_irq_line = 0;
     sb_irq_kind = 0;
     sbp.blk = sbp.blk_left = 0;

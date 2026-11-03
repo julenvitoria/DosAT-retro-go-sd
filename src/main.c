@@ -128,7 +128,7 @@ extern uint32_t *guest_page_table_ptr;
 
 static uint8_t *guest_ram;
 static uint8_t *guest_vram;
-static char dsk_path[176];   /* /roms/dos/<name>: 256 -> 176 (2026-11-03, RAM_EMU) */
+static char dsk_path[128];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03, RAM_EMU) */
 volatile uint32_t dsk_mounted = 0;
 volatile uint32_t dsk_exec_rc = 0xFFFFFFFF;
 volatile uint32_t dsk_startup_ok = 0;
