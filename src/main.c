@@ -128,7 +128,7 @@ extern uint32_t *guest_page_table_ptr;
 
 static uint8_t *guest_ram;
 static uint8_t *guest_vram;
-static char dsk_path[176];   /* /roms/dos/<name>: 256 -> 176 (2026-11-03, RAM_EMU) */
+static char dsk_path[168];   /* /roms/dos/<name>: 256 -> 168 (2026-11-03, RAM_EMU) */
 volatile uint32_t dsk_mounted = 0;
 volatile uint32_t dsk_exec_rc = 0xFFFFFFFF;
 volatile uint32_t dsk_startup_ok = 0;
@@ -4616,7 +4616,18 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                 uint32_t ran = x86_pit_insns - pit_insns_last;
                 pit_insns_last = x86_pit_insns;
                 x86_pit_kips = kips;
-                x86_pit_rt_kips = kips ? kips : ran / (dt ? dt : 1u);
+                /* Smoothed (3/4 old + 1/4 new): one frame's measured rate
+                   swung 1.3k..4.5k kips, and every clock that hangs off it
+                   -- the retrace, the scanlines, the replanned IRQ 0 --
+                   jittered with it. A raster calibration (Pinball Fantasies)
+                   needs the same answer twice in a row. */
+                if (kips) {
+                    x86_pit_rt_kips = kips;
+                } else {
+                    uint32_t m = ran / (dt ? dt : 1u);
+                    x86_pit_rt_kips = x86_pit_rt_kips
+                                    ? (3u * x86_pit_rt_kips + m) / 4u : m;
+                }
             }
 
             /*
@@ -5026,7 +5037,15 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        PIT counts in a ms. 32-bit on purpose -- a 64-bit divide
                        links __aeabi_uldivmod into RAM_EMU, which is guest
                        frames. */
-                    uint32_t per = (slice / plan_ms) * nd / 1193u;
+                    /* At the REAL-TIME clock's rate, the one the 0x3DA beam
+                       and the PIT counters run on (x86_pit_sync): a tick that
+                       is N lines after the retrace by the beam must arrive N
+                       lines after it. The frame's planned rate (slice /
+                       plan_ms) drifted from that by up to 4x and Pinball
+                       Fantasies' raster calibration never converged. */
+                    uint32_t rk = x86_pit_rt_kips ? x86_pit_rt_kips
+                                                  : slice / plan_ms;
+                    uint32_t per = rk * nd / 1193u;
                     if (!per)
                         per = 1u;
                     plan_div = nd;

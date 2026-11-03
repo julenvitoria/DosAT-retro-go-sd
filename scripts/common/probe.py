@@ -469,7 +469,7 @@ def dump_guest(target, syms, specs, out=print):
 
 
 def sample(target, syms, watches=(), derefs=(), count=10, interval=1.0,
-           symbol_maps=(), out=print, on_sample=None):
+           symbol_maps=(), out=print, on_sample=None, regs=()):
     """Halt/read/resume `count` times. Returns the rows it printed.
 
     watches: symbol names read as uint32.
@@ -484,6 +484,8 @@ def sample(target, syms, watches=(), derefs=(), count=10, interval=1.0,
         pc = target.backend.read_register("pc")
         row["pc"] = pc
         row["where"] = describe_pc(pc, symbol_maps or [syms])
+        for r in regs:
+            row[r] = target.backend.read_register(r)
 
         for name in watches:
             row[name] = (target.backend.read_uint32(syms[name])
@@ -507,6 +509,8 @@ def sample(target, syms, watches=(), derefs=(), count=10, interval=1.0,
         rows.append(row)
 
         parts = [f"t+{row['t']:5.1f}s", f"PC=0x{pc:08x}", f"{row['where']:<34}"]
+        for r in regs:
+            parts.append(f"{r}=0x{row[r]:08x}")
         for name in watches:
             parts.append(f"{name}={row[name]}")
         for _, _, label in derefs:

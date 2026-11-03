@@ -2653,7 +2653,24 @@ static uint32_t port_read_inner(uint32_t port)
             uint32_t t = x86_pit_ticks();       /* also syncs pit_rt */
             if (pit_rt % VGA_FRAME_TICKS >= VGA_FRAME_TICKS - VGA_VRETRACE_TICKS)
                 return 0x08u | 0x01u;           /* vertical retrace */
-            if (t % VGA_LINE_TICKS >= VGA_LINE_TICKS - VGA_HBLANK_TICKS)
+            /* THE LINES RUN ON THE SAME CLOCK AS THE FRAME. On the nominal
+               clock they were incoherent with both the retrace and the timer
+               IRQ (both real-time): Pinball Fantasies counts blanks from the
+               retrace to a one-shot IRQ 0 and retunes the PIT until it gets
+               the same count ten times -- the count wandered 49..217 for one
+               setting and the intro never started. The blank is widened so it
+               still spans as many INSTRUCTIONS as 6 ticks do at the nominal
+               rate, which is what Keen 4's five-read wait needs (see
+               x86_pit_sync); at or above the nominal rate it is the real 5 us. */
+            (void)t;
+            uint32_t rk = x86_pit_rt_kips ? x86_pit_rt_kips : PIT_NOMINAL_KIPS;
+            uint32_t win = VGA_HBLANK_TICKS;
+            if (rk < PIT_NOMINAL_KIPS) {
+                win = (VGA_HBLANK_TICKS * PIT_NOMINAL_KIPS) / (rk ? rk : 1u);
+                if (win > VGA_LINE_TICKS / 2u)
+                    win = VGA_LINE_TICKS / 2u;
+            }
+            if (pit_rt % VGA_LINE_TICKS >= VGA_LINE_TICKS - win)
                 v |= 0x01u;                     /* horizontal retrace */
             return v;
         }

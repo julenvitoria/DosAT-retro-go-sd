@@ -120,6 +120,10 @@ def main():
     p.add_argument("--watch", default="",
                    help="comma-separated globals to read as uint32; a GROUP "
                         f"name expands to a whole set ({', '.join(WATCH_GROUPS)})")
+    p.add_argument("--reg", default="",
+                   help="comma-separated CPU registers to print at every "
+                        "sample, e.g. r10 (the guest's LINEAR EIP while the "
+                        "interpreter runs: where a hung guest is looping)")
     p.add_argument("--dump", action="append", default=[],
                    metavar="SYM[:N][xG][=LABEL]",
                    help="hexdump N words of a symbol's own storage, grouped "
@@ -283,7 +287,8 @@ def main():
 
         sample(target, syms, watches=watches, derefs=derefs,
                count=args.samples, interval=args.interval, symbol_maps=maps,
-               on_sample=on_sample)
+               on_sample=on_sample,
+               regs=[r for r in args.reg.split(",") if r])
 
         # After sampling, not before: an array read at t=0 shows the state
         # before the target has done anything, which is how a full log reads
