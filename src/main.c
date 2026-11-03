@@ -128,7 +128,7 @@ extern uint32_t *guest_page_table_ptr;
 
 static uint8_t *guest_ram;
 static uint8_t *guest_vram;
-static char dsk_path[168];   /* /roms/dos/<name>: 256 -> 168 (2026-11-03, RAM_EMU) */
+static char dsk_path[176];   /* /roms/dos/<name>: 256 -> 176 (2026-11-03, RAM_EMU) */
 volatile uint32_t dsk_mounted = 0;
 volatile uint32_t dsk_exec_rc = 0xFFFFFFFF;
 volatile uint32_t dsk_startup_ok = 0;
@@ -1543,8 +1543,6 @@ static FILE *dsk_fp;
  * the card, so whether the click goes is a tier-3 question.
  */
 #define DSK_META_BYTES (1u << 20)
-#define DSK_PUMP_CHUNK 4096u
-static void audio_pump_io(void);
 static FILE *dsk_fp2;
 
 static void dsk_close_extras(void)
@@ -1621,23 +1619,8 @@ static int sd_sector_read(void *ctx, void *dst, uint32_t offset, uint32_t len)
     int sought = abi->fseek(f, (long)offset, SEEK_SET);
     uint32_t t1 = DWT_CYCCNT;
     pgf_acc(&dsk_us_seek, &dsk_seek_us_worst, t1 - t0);
-    /* IN SLICES, WITH THE AUDIO KEPT FED BETWEEN THEM. A talkie loads each
-       spoken line in one INT 21h read of tens of KB, and at SD speed that is
-       longer than a 16.7 ms DMA half: the half was played twice, the click /
-       micro-cut at the start of a line (MI2 talkie, the rope scene). See
-       audio_pump_io() for why the card is left out of that refill. */
-    if (sought == 0) {
-        uint8_t *p = (uint8_t *)dst;
+    if (sought == 0 && abi->fread(dst, 1, len, f) == len)
         rc = 0;
-        while (len) {
-            uint32_t n = len > DSK_PUMP_CHUNK ? DSK_PUMP_CHUNK : len;
-            if (abi->fread(p, 1, n, f) != n) { rc = -1; break; }
-            p += n;
-            len -= n;
-            if (len)
-                audio_pump_io();
-        }
-    }
     pgf_acc(&dsk_us_read, &dsk_read_us_worst, DWT_CYCCNT - t1);
     X86_ZONE_EXIT();
     if (rc != 0) dsk_errors++;
@@ -4429,23 +4412,6 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
     }
 }
 
-/*
- * A REFILL FROM INSIDE A DISK READ (sd_sector_read, between slices).
- *
- * THE SOUND BLASTER IS RENDERED TOO. The first version left it out, fearing a
- * guest page fault from inside an HLE read, and that turned the repeated half
- * into a 16.7 ms HOLE in the voice -- exactly where a talkie is streaming the
- * next 8 KB of speech while the current chunk plays: the owner's micro-cuts
- * did not change (MI2T, 2026-11-03). Between slices nothing is in flight: the
- * firmware's stdio has returned, the destination is the host disk cache (not
- * guest memory), and the guest FatFs is in its disk_read callback, which the
- * pager never enters. So the card's DMA walk is as safe here as in the frame.
- */
-static void audio_pump_io(void)
-{
-    audio_pump(gw_firmware_abi(), 0);
-}
-
 static void emulator_loop(const gw_firmware_abi_t *abi)
 {
     /* Give the I/O layer the clock that timestamps speaker events BEFORE the
@@ -4616,18 +4582,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                 uint32_t ran = x86_pit_insns - pit_insns_last;
                 pit_insns_last = x86_pit_insns;
                 x86_pit_kips = kips;
-                /* Smoothed (3/4 old + 1/4 new): one frame's measured rate
-                   swung 1.3k..4.5k kips, and every clock that hangs off it
-                   -- the retrace, the scanlines, the replanned IRQ 0 --
-                   jittered with it. A raster calibration (Pinball Fantasies)
-                   needs the same answer twice in a row. */
-                if (kips) {
-                    x86_pit_rt_kips = kips;
-                } else {
-                    uint32_t m = ran / (dt ? dt : 1u);
-                    x86_pit_rt_kips = x86_pit_rt_kips
-                                    ? (3u * x86_pit_rt_kips + m) / 4u : m;
-                }
+                x86_pit_rt_kips = kips ? kips : ran / (dt ? dt : 1u);
             }
 
             /*
@@ -5037,15 +4992,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        PIT counts in a ms. 32-bit on purpose -- a 64-bit divide
                        links __aeabi_uldivmod into RAM_EMU, which is guest
                        frames. */
-                    /* At the REAL-TIME clock's rate, the one the 0x3DA beam
-                       and the PIT counters run on (x86_pit_sync): a tick that
-                       is N lines after the retrace by the beam must arrive N
-                       lines after it. The frame's planned rate (slice /
-                       plan_ms) drifted from that by up to 4x and Pinball
-                       Fantasies' raster calibration never converged. */
-                    uint32_t rk = x86_pit_rt_kips ? x86_pit_rt_kips
-                                                  : slice / plan_ms;
-                    uint32_t per = rk * nd / 1193u;
+                    uint32_t per = (slice / plan_ms) * nd / 1193u;
                     if (!per)
                         per = 1u;
                     plan_div = nd;
