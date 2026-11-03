@@ -2336,6 +2336,49 @@ int x86_dos_int27(void)
     return dos_tsr((uint16_t)(bytes >> 4), 0);
 }
 
+/*
+ * AH=3Bh, change directory. Was not handled at all: every chdir came back
+ * "invalid function". Pinball Fantasies Deluxe's launchers CD into
+ * \21STCENT\PFD (and the CD's \PFD\FANTASY) before running a table, and went
+ * nowhere. "." and ".." are folded here, because dos_path_from_guest() only
+ * joins. NOT in RAM_UC: that segment ends 2 KB short of a page, and these
+ * 200 B pushed it over and cost the bonus pool a 4 KB page.
+ */
+static void dos_chdir(uint32_t lin)
+{
+    char path[64], norm[sizeof(dos_cwd)];
+    dos_path_from_guest(lin, path, sizeof(path));
+    dos_log_path(path);
+    unsigned n = 0;
+    for (const char *p = path; *p; ) {
+        const char *e = p;
+        while (*e && *e != '/')
+            e++;
+        unsigned len = (unsigned)(e - p);
+        if (len == 2 && p[0] == '.' && p[1] == '.') {
+            while (n && norm[n - 1] != '/')
+                n--;
+            if (n)
+                n--;                            /* the separator before it */
+        } else if (len && !(len == 1 && p[0] == '.')) {
+            if (n + (n != 0) + len >= sizeof(norm)) { fail(0x03); return; }
+            if (n)
+                norm[n++] = '/';
+            memcpy(norm + n, p, len);
+            n += len;
+        }
+        p = *e ? e + 1 : e;
+    }
+    norm[n] = 0;
+    FILINFO fno;
+    if (n && (f_stat(norm, &fno) != FR_OK || !(fno.fattrib & AM_DIR))) {
+        fail(0x03);                             /* path not found */
+        return;
+    }
+    x86_dos_set_cwd(norm);
+    ok_clear_cf();
+}
+
 static int dos_int21_dispatch(uint8_t func)
 {
     uint32_t *r = cpu_state_ptr->regs;
@@ -2753,6 +2796,10 @@ static int dos_int21_dispatch(uint8_t func)
         ok_clear_cf();
         return 1;
     }
+
+    case 0x3B:                                  /* change directory */
+        dos_chdir(cpu_state_ptr->segs[3].base + dx);
+        return 1;
 
     case 0x41: {                                /* delete file */
         char path[64];
