@@ -3854,6 +3854,7 @@ FRESULT f_open (
 			{
 				fp->obj.sclust = ld_clust(fs, dj.dir);					/* Get object allocation info */
 				fp->obj.objsize = ld_dword(dj.dir + DIR_FileSize);
+				fp->obj.stat = 0;		/* tinyemu: contiguity unknown (X86_FF_CONTIG) */
 			}
 #if FF_USE_FASTSEEK
 			fp->cltbl = 0;		/* Disable fast seek mode */
@@ -4526,6 +4527,33 @@ FRESULT f_lseek (
 				clst = fp->clust;
 			} else {									/* When seek to back cluster, */
 				clst = fp->obj.sclust;					/* start from the first cluster */
+#if X86_FF_CONTIG
+				/* tinyemu: a backward seek on a CONTIGUOUS read-only file
+				   lands on its cluster in O(1) instead of walking the chain
+				   from the start. A talkie streams speech with read-ahead and
+				   seeks back a few KB per chunk; 240 MB into MONSTER.SOU that
+				   walk read 64 KB of FAT through a 64 KB disk cache, every
+				   chunk -- the micro-cuts in the voices. Contiguity is tested
+				   once per open (obj.stat b7 = yes, b6 = no; unused on FAT). */
+				if (clst && !(fp->flag & FA_WRITE)) {
+					if (!(fp->obj.stat & 0xC0)) {
+						DWORD c = clst, n = (DWORD)((fp->obj.objsize - 1) / bcs);
+						BYTE st = 0x80;
+						while (n--) {
+							DWORD nx = get_fat(&fp->obj, c);
+							if (nx != c + 1) { st = 0x40; break; }
+							c = nx;
+						}
+						fp->obj.stat |= st;
+					}
+					if (fp->obj.stat & 0x80) {
+						DWORD k = (DWORD)((ofs - 1) / bcs);
+						clst += k;
+						fp->fptr = (FSIZE_t)k * bcs;
+						ofs -= fp->fptr;
+					}
+				}
+#endif
 #if !FF_FS_READONLY
 				if (clst == 0) {						/* If no cluster chain, create a new chain */
 					clst = create_chain(&fp->obj, 0);

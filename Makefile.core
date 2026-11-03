@@ -323,6 +323,10 @@ $(if $(X86_PG_DONATE_RESERVE),-DX86_PG_DONATE_RESERVE=$(X86_PG_DONATE_RESERVE)u)
 -DMAX_CHEAT_CODES=13 \
 -DIS_LITTLE_ENDIAN
 
+# Backward seeks on a contiguous read-only guest file land in O(1) instead of
+# re-walking its FAT chain (lib/FatFs/ff.c f_lseek; talkie speech streaming).
+CORE_C_DEFS += -DX86_FF_CONTIG=1
+
 # Our FatFs interprets the guest .dsk; the firmware's FatFs (reached through
 # the SDK bridge, which maps f_* to core_f_*) reads the SD card underneath it.
 # Two instances in one binary, so ours gets its own namespace -- without this
