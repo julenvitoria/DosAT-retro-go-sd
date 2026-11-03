@@ -162,6 +162,12 @@ is exactly how the palette stream was cleared of a channel rotation.
 `--bytes-save SYM[:N]:FILE` writes the range out for a byte compare against a
 reference. **For GUEST memory use `--guest`, never `--bytes`.**
 
+`--reg r10[,r0,...]` prints CPU registers at every sample. R10 is the guest's
+LINEAR EIP while the interpreter runs, so a few samples of a hung title name
+the loop it is in (`--guest-save` it, `ndisasm -b16 -o <lin>`); a sample that
+lands in firmware code shows a stale value. That is how Pinball Fantasies'
+raster calibration (0x3CFAA..0x3CFE5, `cmp bp,[0x45e]`) was found.
+
 `--guest-watch LINADDR[=LABEL]` reads a uint32 of guest LINEAR memory at
 every sample, next to the `--watch` globals: a game's own counters become a
 rate. Ironman keeps a frame counter at 05F7:06B7 (`--guest-watch
