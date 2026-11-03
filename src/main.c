@@ -4318,8 +4318,6 @@ static uint32_t audio_frames;       /* samples per half, set at audio start */
 static uint32_t audio_dma_last;
 static int      audio_dma_seen;
 
-static uint8_t audio_pump_in_io;
-
 static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
 {
     if (abi->dma_counter_ptr) {
@@ -4384,8 +4382,7 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
            the same 18 transfers) and the FM gain below was chosen against
            THIS card level rather than against the ducked one. The mix
            clamps either way. */
-        if (!audio_pump_in_io)
-            x86_sb_render_mix(abuf, audio_frames, SAMPLE_RATE, amp);
+        x86_sb_render_mix(abuf, audio_frames, SAMPLE_RATE, amp);
 #endif
         /* AND THE FM SYNTHESISER ON TOP OF BOTH, on the same clock and for
            the same reason: a title can play a digitised effect over its
@@ -4433,18 +4430,20 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
 }
 
 /*
- * A REFILL FROM INSIDE A DISK READ (sd_sector_read, between slices). The
- * speaker and the FM chip are host-side state and safe to render here; the
- * Sound Blaster is NOT rendered, because its render walks GUEST memory and may
- * fault a page in -- from inside an HLE that is itself mid-read. The card just
- * holds its place for that half (a talkie's card is idle while its next line
- * loads anyway), and a repeated half -- the click -- becomes music alone.
+ * A REFILL FROM INSIDE A DISK READ (sd_sector_read, between slices).
+ *
+ * THE SOUND BLASTER IS RENDERED TOO. The first version left it out, fearing a
+ * guest page fault from inside an HLE read, and that turned the repeated half
+ * into a 16.7 ms HOLE in the voice -- exactly where a talkie is streaming the
+ * next 8 KB of speech while the current chunk plays: the owner's micro-cuts
+ * did not change (MI2T, 2026-11-03). Between slices nothing is in flight: the
+ * firmware's stdio has returned, the destination is the host disk cache (not
+ * guest memory), and the guest FatFs is in its disk_read callback, which the
+ * pager never enters. So the card's DMA walk is as safe here as in the frame.
  */
 static void audio_pump_io(void)
 {
-    audio_pump_in_io = 1;
     audio_pump(gw_firmware_abi(), 0);
-    audio_pump_in_io = 0;
 }
 
 static void emulator_loop(const gw_firmware_abi_t *abi)
