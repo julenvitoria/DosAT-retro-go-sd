@@ -2119,6 +2119,7 @@ static const uint8_t sbdma_isr[] = {
 
 static void sbdma_test_run(void)
 {
+    x86_io_alloc = sbd_alloc;   /* before the DSP starts a transfer */
     /* 0x0D is DELIBERATELY NOT in this list: IRQ 5 must go through the guest's
        own vector, which is the path being graded. */
     static const uint8_t hle_vectors[] = { 0x08, 0x09, 0x10, 0x16, 0x1A, 0x20, 0x21 };
@@ -2162,8 +2163,6 @@ static void sbdma_test_run(void)
            transfer) and then offer the interrupt, in that order and at every
            boundary -- exactly what src/main.c does. */
         memset(sbd_audio, 0, sizeof(sbd_audio));
-        if (!x86_io_alloc)
-            x86_io_alloc = sbd_alloc;
         unsigned got = x86_sb_render_mix(sbd_audio, SBD_FRAMES, SBD_RATE, 32767);
         if (got && !captured) {
             for (unsigned i = 0; i < 32; i++)
@@ -2286,6 +2285,7 @@ static const uint8_t sbadpcm_code[] = {
 
 static void sbadpcm_test_run(void)
 {
+    x86_io_alloc = sbd_alloc;   /* before the DSP starts a transfer */
     static const uint8_t hle_vectors[] = { 0x08, 0x09, 0x10, 0x16, 0x1A, 0x20, 0x21 };
 
     x86_video_init(cga_test_vram, cga_test_palette);
@@ -2337,8 +2337,6 @@ static void sbadpcm_test_run(void)
             break;
         }
         memset(sbd_audio, 0, sizeof(sbd_audio));
-        if (!x86_io_alloc)
-            x86_io_alloc = sbd_alloc;
         unsigned got = x86_sb_render_mix(sbd_audio, SBD_FRAMES, SBD_RATE, 32767);
         if (got && !captured) {
             for (unsigned i = 0; i < 32; i++)

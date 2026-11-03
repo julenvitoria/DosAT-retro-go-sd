@@ -1863,8 +1863,6 @@ unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
                            int16_t amplitude)
 {
     sb_dac_render(dst, frames, amplitude);
-    if (!sb_ring && x86_io_alloc)
-        sb_ring = (int16_t *)x86_io_alloc(SB_RING * sizeof(int16_t));
     if (!sb_ring || !frames || frames > SB_RING / 2u)
         return 0;                       /* no ring: the card is mute, not wrong */
 
@@ -1917,6 +1915,12 @@ static void sb_start_fmt(uint8_t bits16, uint8_t autoinit, uint8_t stereo,
                          uint8_t sign, uint8_t silent, uint32_t samples,
                          uint8_t adpcm_fmt, uint8_t ref)
 {
+    /* The output ring is taken at the FIRST DMA transfer, not at the first
+       refill: the AHB heap is small on the device, and taking it up front
+       left the direct-DAC FIFO (sb_dac_put) nothing -- Another World, which
+       never starts a DMA transfer, went silent (owner, 2026-11-04). */
+    if (!sb_ring && x86_io_alloc)
+        sb_ring = (int16_t *)x86_io_alloc(SB_RING * sizeof(int16_t));
     sbp.adpcm_fmt         = adpcm_fmt;
     sbp.adpcm_ref_pending = adpcm_fmt ? ref : 0u;
     sbp.adpcm_n = sbp.adpcm_i = 0;
