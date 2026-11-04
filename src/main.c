@@ -639,6 +639,7 @@ static uint32_t bda_acc;              /* the same, for the 18.2 Hz BDA count */
 static uint32_t tick_irqs_owed;       /* IRQ 0s this frame still has to give */
 static uint32_t tick_last_ms;
 static uint32_t pit_restarts_seen;
+extern uint8_t x86_pit_ch_mode[3];
 /* PHASE MODE. After the guest loads PIT channel 0 the ticks follow THAT
    period's phase, in instructions, across frame boundaries, instead of being
    spread over each frame from the real-time count -- see tick_phase_plan(). It
@@ -4864,6 +4865,8 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
             uint32_t per = (slice / plan_ms) * plan_div / 1193u;
             if (!per)
                 per = 1u;
+            if (x86_pit_ch_mode[0] == 0u)
+                per = 0x7FFFFFFFu;      /* one-shot: nothing after the first */
             uint32_t first = tick_phase_left ? tick_phase_left : 1u;
             uint32_t n = tick_phase_plan(first, slice, per, &phase_tail);
             tick_irqs_owed = n;
@@ -5058,6 +5061,23 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        links __aeabi_uldivmod into RAM_EMU, which is guest
                        frames. */
                     uint32_t per = (slice / plan_ms) * nd / 1193u;
+                    uint32_t per_next = per;
+                    /* MODE 0 IS A ONE-SHOT, timed on the guest's own clock.
+                       Pinball Fantasies calibrates a raster split by loading
+                       a mode 0 count right after the retrace and counting
+                       0x3DA hsync edges until its INT 08h lands; it wants the
+                       same answer ten times. The edges are on the NOMINAL
+                       clock (x86_pit_kips), the periodic plan above on this
+                       frame's measured rate: the count wandered 160..720 for
+                       one reload and the intro never got past the logo. So
+                       the one interrupt comes `nd` ticks of that same clock
+                       after the load, and no other follows until the next
+                       load. k/16 over 75 for 1,193 is 0.5% slow, and a steady error is harmless
+                       here: the calibration wants the SAME answer, not a true one. */
+                    if (x86_pit_ch_mode[0] == 0u) {
+                        per = nd * ((x86_pit_kips ? x86_pit_kips : 5500u) >> 4) / 75u;
+                        per_next = 0x7FFFFFFFu;
+                    }
                     if (!per)
                         per = 1u;
                     plan_div = nd;
@@ -5080,10 +5100,10 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                     tick_acc = 0;
                     tick_phase_on = 1;
                     tick_phase_quiet = 0;
-                    uint32_t n = tick_phase_plan(per, left, per, &phase_tail);
+                    uint32_t n = tick_phase_plan(per, left, per_next, &phase_tail);
                     tick_irqs_owed = n;
                     subs = n + 1u;      /* a tick-less first sub-slice, then n */
-                    sub_slice = per;
+                    sub_slice = per_next;
                     sub_left = n ? per : left;
                 }
                 /* An audio chunk inside the sub-slice: go straight back in,

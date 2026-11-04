@@ -243,13 +243,13 @@ static uint8_t  pit_ch_rdphase[3];  /* lo/hi READ phase (its own, not the
  * A BOOTED MACHINE, not a blank one. These defaults are load-bearing: a guest
  * that never writes a control word -- Alley Cat reads port 0x40 six million
  * times in one run and programs it never -- still expects the counter the BIOS
- * left running. Zeroed, pit_ch_mode[0] would be mode 0, the one-shot: the
+ * left running. Zeroed, x86_pit_ch_mode[0] would be mode 0, the one-shot: the
  * count would reach terminal count after one period and read 0 forever after,
  * which is a clock that stopped rather than one that never started, and just
  * as useless. Channel 0 is mode 3 at 65536, channel 1 is the mode 2 refresh
  * counter, and channel 2 is stopped because its gate is (port 0x61 bit 0).
  */
-static uint8_t  pit_ch_mode[3]    = { 3, 2, 3 };
+uint8_t  x86_pit_ch_mode[3] = { 3, 2, 3 };   /* main.c: mode 0 is a one-shot IRQ */
 static uint8_t  pit_ch_running[3] = { 1, 1, 0 };
 static uint16_t pit_ch_frozen[3]  = { 0xFFFF, 0xFFFF, 0xFFFF };
 
@@ -285,7 +285,7 @@ static uint16_t pit_count(unsigned ch)
         return pit_ch_frozen[ch];
 
     uint32_t el = pit_rt - pit_ch_start[ch];
-    if (pit_ch_mode[ch] == 0 || pit_ch_mode[ch] == 1) {
+    if (x86_pit_ch_mode[ch] == 0 || x86_pit_ch_mode[ch] == 1) {
         if (el >= R - 1u)
             return 0;                /* terminal count, and it stays there */
         return (uint16_t)((R - 1u) - el);
@@ -627,7 +627,7 @@ static void pit_write_control(uint8_t v)
     unsigned mode = (v >> 1) & 7u;
     if (mode > 5u)
         mode -= 4u;
-    pit_ch_mode[ch] = (uint8_t)mode;
+    x86_pit_ch_mode[ch] = (uint8_t)mode;
     pit_ch_rdphase[ch] = 0;
     pit_ch_latched[ch] = 0;
     if (ch == 0) {
