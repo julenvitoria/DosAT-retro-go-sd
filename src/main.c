@@ -1330,8 +1330,22 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
            than before it existed: every read goes to the backend and re-walks
            the file. Halve until something fits; a 16 KB cache is worth far more
            than none. x86_disk_cache_bytes says what we actually got. */
+        /* AND LEAVE THE SOUND BLASTER ITS 8 KB. The card's output ring and
+           its direct-DAC FIFO (x86_io.c, 4 KB each) are taken LATER, at the
+           title's first transfer, from this same heap -- after the stdio
+           buffers of the pagefile and the second .dsk handle. Taking "what
+           fits" here left them a remainder that varied by title: Another
+           World lost its FIFO when the ring came first, and Dune II (xms on,
+           so one more fopen) lost the ring, which mutes every transfer and
+           took its intro voices (device, 2026-11-04). Halving the cache until
+           12 KB stays free costs at most one halving; a zero answer from an
+           older firmware keeps the old behaviour. */
+        uint32_t ahb_free = (uint32_t)abi->mem_ctl(GW_MEM_OP_FREE_SIZE,
+                                                   GW_MEM_AHB, 0, 0);
         void *dc = NULL;
         uint32_t want = X86_DISK_CACHE_BYTES;
+        while (ahb_free && want >= 16384u && want + 12288u > ahb_free)
+            want /= 2u;
         while (!dc && want >= 8192u) {
             dc = (void *)abi->mem_ctl(GW_MEM_OP_ALLOC, GW_MEM_AHB, 1, want);
             if (!dc)
@@ -4398,6 +4412,7 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
            are silent; submits stuck at 0 says the frame loop never reaches
            the audio phase at all. Neither is inferable from the SB
            counters, and the difference is the whole question. */
+        x86_audio_highpass(abuf, audio_frames);
         x86_audio_submits++;
         int32_t pk = 0;
         for (unsigned i = 0; i < audio_frames; i++) {

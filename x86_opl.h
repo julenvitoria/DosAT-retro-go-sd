@@ -97,4 +97,7 @@ void x86_opl_bench_all_on(void);
    when X86_OPL_BENCH=1. Read it with probe.py --watch. */
 extern volatile uint32_t x86_opl_frame_cycles;
 
+/* The finished mix, high-passed at ~140 Hz in place (src/main.c, per half). */
+void x86_audio_highpass(int16_t *buf, unsigned n) __attribute__((long_call));
+
 #endif /* X86_OPL_H */
