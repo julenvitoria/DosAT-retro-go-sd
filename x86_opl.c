@@ -209,9 +209,7 @@ int x86_opl_active(void)
     return opl && (opl->slot_key_status || opl_live_slots());
 }
 
-extern uint32_t x86_pit_ticks(void);
 static uint16_t rst_mask;   /* channels keyed on by a muting reset, not yet aged */
-static uint32_t rst_t;      /* guest PIT time of the last such key-on */
 
 void x86_opl_write(uint8_t reg, uint8_t val)
 {
@@ -263,7 +261,17 @@ void x86_opl_write(uint8_t reg, uint8_t val)
      * the owner's "petardeo" after the Westwood logo (checked against
      * Nuked-OPL3 replaying the same register log, 2026-11-04). So the reset
      * is remembered, and the first envelope or frequency write to that
-     * channel applies the decay the elapsed GUEST time would have done.
+     * channel applies the decay the elapsed guest time would have done.
+     *
+     * AND THAT DECAY IS NOW TOTAL (2026-11-04). It was aged by x86_pit_ticks(),
+     * but that clock is the NOMINAL one (instructions at 5,500 kips), and in
+     * the logo it ran ~3.5x short of the music's own tempo in a gwemu trace:
+     * the ~2 ms the driver takes came out as well under the 2.6 ms a DR-15
+     * fall needs to reach the floor. What was left rang on at full pitch --
+     * channel 5 alone kept 300-530 Hz tones at ~15x the level a full mute
+     * leaves, 3-5 s into the logo, the window the owner still heard
+     * "petardeo" in with the 140 Hz high-pass in. The driver's intent is
+     * plainly "silence this channel", so silence it.
      */
     if (rst_mask) {
         static const uint8_t op_ch[22] = { 0, 1, 2, 0, 1, 2, 9, 9,
@@ -273,9 +281,7 @@ void x86_opl_write(uint8_t reg, uint8_t val)
                     : (reg >= 0x60u && reg < 0x96u && ((reg - 0x60u) & 0x1Fu) < 22u)
                       ? op_ch[(reg - 0x60u) & 0x1Fu] : 9u;
         if (ch < 9u && ((rst_mask >> ch) & 1u)) {
-            uint32_t e = (x86_pit_ticks() - rst_t) / 6u;   /* 4 units per chip sample */
-            opl->slot[ch * 2u].eg_out = opl->slot[ch * 2u + 1u].eg_out =
-                (uint16_t)(e > OPL_EG_MAX ? OPL_EG_MAX : e);
+            opl->slot[ch * 2u].eg_out = opl->slot[ch * 2u + 1u].eg_out = OPL_EG_MAX;
             rst_mask &= (uint16_t)~(1u << ch);
         }
     }
@@ -299,7 +305,6 @@ void x86_opl_write(uint8_t reg, uint8_t val)
             (opl->reg[0x80u + m] & 0xF0u) == 0xF0u &&
             (opl->reg[0x83u + m] & 0xF0u) == 0xF0u) {
             rst_mask |= (uint16_t)(1u << on);
-            rst_t = x86_pit_ticks();
         }
     }
 }
