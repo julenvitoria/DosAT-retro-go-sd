@@ -153,6 +153,11 @@ static uint32_t  win_base[WINDOW_COUNT];    /* first sector, window-aligned     
 static uint32_t  win_len[WINDOW_COUNT];     /* sectors valid, 0 = empty         */
 static uint32_t  win_age[WINDOW_COUNT];     /* LRU stamp                        */
 static uint32_t  win_clock;
+/* Windows actually backed: WINDOW_COUNT, or fewer when the AHB heap could not
+   spare 64 KB (src/main.c leaves the Sound Blaster its 8 KB first). Fewer
+   windows is a smaller cache; NO cache -- what a short buffer used to mean --
+   sends every sector to the card and was heard as clicks in the talkies. */
+static unsigned  win_n;
 
 /*
  * Hand the cache its storage. Returns 0 on failure, and the caller is expected
@@ -173,10 +178,14 @@ int x86_disk_cache_init(void *mem, uint32_t bytes)
     }
     win_clock = 0;
 
-    if (!mem || bytes < WINDOW_COUNT * WINDOW_BYTES)
+    unsigned n = bytes / WINDOW_BYTES;
+    if (n > WINDOW_COUNT)
+        n = WINDOW_COUNT;
+    if (!mem || n < 2u)                    /* one window thrashes: see above */
         return 0;
+    win_n = n;
     win_data = (uint8_t *)mem;
-    x86_disk_cache_bytes = WINDOW_COUNT * WINDOW_BYTES;
+    x86_disk_cache_bytes = win_n * WINDOW_BYTES;
     x86_disk_cache_ok = 1;
     return 1;
 }
@@ -189,7 +198,7 @@ static void cache_invalidate(uint32_t sector, uint32_t count)
 {
     if (!win_data)
         return;
-    for (unsigned i = 0; i < WINDOW_COUNT; i++) {
+    for (unsigned i = 0; i < win_n; i++) {
         if (!win_len[i])
             continue;
         if (sector < win_base[i] + win_len[i] && win_base[i] < sector + count) {
@@ -383,7 +392,7 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
         uint32_t last  = ((uint32_t)sector + count - 1u) & ~(WINDOW_SECTORS - 1u);
         if (first != last) {
             unsigned resident = 0;
-            for (unsigned k = 0; k < WINDOW_COUNT; k++) {
+            for (unsigned k = 0; k < win_n; k++) {
                 if (win_len[k] && (win_base[k] == first || win_base[k] == last))
                     resident++;
             }
@@ -407,16 +416,16 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
             int filled = 0;
 
             /* Resident? */
-            for (i = 0; i < WINDOW_COUNT; i++) {
+            for (i = 0; i < win_n; i++) {
                 if (win_len[i] && win_base[i] == base)
                     break;
             }
 
-            if (i == WINDOW_COUNT) {
+            if (i == win_n) {
                 /* Miss. Pick the least recently used window -- an empty one
                    first, since win_age of an unused slot is 0. */
                 uint32_t oldest = 0xFFFFFFFFu;
-                for (unsigned k = 0; k < WINDOW_COUNT; k++) {
+                for (unsigned k = 0; k < win_n; k++) {
                     if (!win_len[k]) { victim = k; oldest = 0; break; }
                     if (win_age[k] < oldest) { oldest = win_age[k]; victim = k; }
                 }
