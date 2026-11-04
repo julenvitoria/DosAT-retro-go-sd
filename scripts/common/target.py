@@ -327,7 +327,14 @@ class GwemuTarget(Target):
         # Silent by default: these run in the background repeatedly.
         # sdl3, not sdl: gwemu is built against SDL3 and the older backend
         # name makes it fail SDL audio init and exit before QMP ever opens.
-        cmd += ["-audiodev", ("sdl3,id=snd0" if self.audio else "none,id=snd0"),
+        # --audio-wav: gwemu's own `wav` backend records exactly what the
+        # emulated SAI1 plays, paced by the emulated clock -- the device's
+        # output stream, independent of how slowly the host runs.
+        if isinstance(self.audio, str):
+            dev = "wav,id=snd0,path=" + os.path.abspath(self.audio)
+        else:
+            dev = "sdl3,id=snd0" if self.audio else "none,id=snd0"
+        cmd += ["-audiodev", dev,
                 "-global", "gnw-h7b0-sai1.audiodev=snd0"]
         if os.path.exists(os.path.join(self.tmpdir, "sdcard.img")):
             cmd += ["-drive", "if=sd,format=raw,file=sdcard.img"]
@@ -637,6 +644,9 @@ def add_target_args(parser):
                         help="show the gwemu window")
     parser.add_argument("--audio", action="store_true",
                         help="enable host audio (silent by default)")
+    parser.add_argument("--audio-wav", default=None, metavar="FILE",
+                        help="gwemu: record the emulated SAI output to a WAV "
+                             "(what the panel's speaker would play)")
     parser.add_argument("--icount", default=None,
                         help="gwemu -icount shift; makes DWT counts "
                              "reproducible (see docs/06)")
@@ -689,7 +699,8 @@ def open_target(args, image):
                                                      False),
                               timeline=getattr(args, "timeline", None))
     return GwemuTarget(image, display=getattr(args, "gui", False),
-                       audio=getattr(args, "audio", False),
+                       audio=(getattr(args, "audio_wav", None)
+                              or getattr(args, "audio", False)),
                        icount=getattr(args, "icount", None),
                        timeline=getattr(args, "timeline", None),
                        record=getattr(args, "record", None),

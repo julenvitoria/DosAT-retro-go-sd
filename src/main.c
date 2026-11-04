@@ -128,7 +128,7 @@ extern uint32_t *guest_page_table_ptr;
 
 static uint8_t *guest_ram;
 static uint8_t *guest_vram;
-static char dsk_path[128];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03, RAM_EMU) */
+static char dsk_path[112];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03), -> 112 (2026-11-04): RAM_EMU */
 volatile uint32_t dsk_mounted = 0;
 volatile uint32_t dsk_exec_rc = 0xFFFFFFFF;
 volatile uint32_t dsk_startup_ok = 0;
@@ -1557,6 +1557,8 @@ static FILE *dsk_fp;
  * the card, so whether the click goes is a tier-3 question.
  */
 #define DSK_META_BYTES (1u << 20)
+#define DSK_PUMP_CHUNK 4096u
+static void audio_pump_io(void);
 static FILE *dsk_fp2;
 
 static void dsk_close_extras(void)
@@ -1633,8 +1635,27 @@ static int sd_sector_read(void *ctx, void *dst, uint32_t offset, uint32_t len)
     int sought = abi->fseek(f, (long)offset, SEEK_SET);
     uint32_t t1 = DWT_CYCCNT;
     pgf_acc(&dsk_us_seek, &dsk_seek_us_worst, t1 - t0);
-    if (sought == 0 && abi->fread(dst, 1, len, f) == len)
+    /* IN SLICES, WITH THE AUDIO KEPT FED BETWEEN THEM -- and after the last
+       one, because a DOS read of tens of KB is SEVERAL of these calls (one
+       per cache window) back to back. Without it a load that outlasts a
+       16.7 ms SAI half leaves the DMA replaying the previous buffer: Dune
+       II's Westwood logo plays while the intro loads, and the owner's
+       console recording of it repeats at exactly two halves' lag (1598
+       samples) in 20% of windows against 0% in the title and the planet
+       (2026-11-04) -- "una onda superpuesta". The card is left out of this
+       refill (audio_pump_io). Reinstates 6423030's loop, reverted in
+       3ef38ac together with the clock change that was the real culprit. */
+    if (sought == 0) {
+        uint8_t *p = (uint8_t *)dst;
         rc = 0;
+        while (len) {
+            uint32_t n = len > DSK_PUMP_CHUNK ? DSK_PUMP_CHUNK : len;
+            if (abi->fread(p, 1, n, f) != n) { rc = -1; break; }
+            p += n;
+            len -= n;
+            audio_pump_io();
+        }
+    }
     pgf_acc(&dsk_us_read, &dsk_read_us_worst, DWT_CYCCNT - t1);
     X86_ZONE_EXIT();
     if (rc != 0) dsk_errors++;
@@ -4315,6 +4336,8 @@ static uint32_t audio_frames;       /* samples per half, set at audio start */
 static uint32_t audio_dma_last;
 static int      audio_dma_seen;
 
+static uint8_t audio_pump_in_io;
+
 static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
 {
     if (abi->dma_counter_ptr) {
@@ -4379,7 +4402,8 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
            the same 18 transfers) and the FM gain below was chosen against
            THIS card level rather than against the ducked one. The mix
            clamps either way. */
-        x86_sb_render_mix(abuf, audio_frames, SAMPLE_RATE, amp);
+        if (!audio_pump_in_io)
+            x86_sb_render_mix(abuf, audio_frames, SAMPLE_RATE, amp);
 #endif
         /* AND THE FM SYNTHESISER ON TOP OF BOTH, on the same clock and for
            the same reason: a title can play a digitised effect over its
@@ -4425,6 +4449,20 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
             x86_audio_peak_max = (uint32_t)pk;
         x86_audio_volume = (uint32_t)abi->common_emu_sound_get_volume();
     }
+}
+
+/*
+ * A REFILL FROM INSIDE A DISK READ (sd_sector_read, between slices). The
+ * speaker and the FM chip are host-side state and safe to render here; the
+ * Sound Blaster is NOT rendered, because its render walks GUEST memory and may
+ * fault a page in -- from inside an HLE that is itself mid-read. The card
+ * holds its place for that half (the ring delays it, nothing is dropped).
+ */
+static void audio_pump_io(void)
+{
+    audio_pump_in_io = 1;
+    audio_pump(gw_firmware_abi(), 0);
+    audio_pump_in_io = 0;
 }
 
 static void emulator_loop(const gw_firmware_abi_t *abi)

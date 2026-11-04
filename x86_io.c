@@ -411,7 +411,7 @@ volatile uint32_t x86_spk_log_idx = 0;
  * scripts/probe.py --io-log
  */
 #ifndef X86_IO_LOG_SLOTS
-#define X86_IO_LOG_SLOTS 4    /* 32 -> 16 (2026-10-24): RAM_EMU for the PIT phase; 16 -> 8 (2026-11-03): the SB ring; 8 -> 4 (2026-11-04): the AHB reserve */
+#define X86_IO_LOG_SLOTS 2    /* 32 -> 16 (2026-10-24): RAM_EMU for the PIT phase; 16 -> 8 (2026-11-03): the SB ring; 8 -> 4 -> 2 (2026-11-04): the AHB reserve, the in-read audio refill */
 #endif
 volatile uint32_t x86_io_log[X86_IO_LOG_SLOTS * 2];
 /* The ring's length, published so the decoder follows a diagnostic build
