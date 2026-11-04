@@ -391,3 +391,31 @@ void x86_opl_bench_all_on(void)
         x86_opl_write((uint8_t)(0xB0 + c), (uint8_t)(0x20 | (4 << 2) | 1));
     }
 }
+
+/* THE BASS THE SPEAKER CANNOT PLAY IS TAKEN OUT. Two one-pole high-passes
+   at ~140 Hz (12 dB/octave) over the finished mix. The Game & Watch speaker
+   reproduces nothing that low, but it is still DRIVEN by it: Dune II's
+   Westwood logo is 57% energy under 100 Hz (plus a DC offset) and Monkey
+   Island's theme half under 200 Hz, and that excursion is the "petardeo" /
+   "distorsion" heard on the device (2026-11-04) -- while the FM render itself
+   matches Nuked-OPL3 band for band on the same register logs. State in Q8 so
+   the slow pole does not stall. It lives HERE and not in src/main.c for the
+   memory map alone: this file's .bss is in RAM_UC, which had the 16 B, and
+   the code is in ITCM -- RAM_EMU had no 200 B to spare. */
+static int32_t hpf_xp1, hpf_y1, hpf_xp2, hpf_y2;
+__attribute__((section(".itcram_hot.hpf"), noinline, long_call))
+void x86_audio_highpass(int16_t *buf, unsigned n)
+{
+    const int32_t A = 32172;                 /* exp(-2*pi*140/48000), Q15 */
+    int32_t xp1 = hpf_xp1, y1 = hpf_y1, xp2 = hpf_xp2, y2 = hpf_y2;
+    for (unsigned i = 0; i < n; i++) {
+        int32_t x = (int32_t)buf[i] << 8;
+        y1 = (int32_t)(((int64_t)A * (y1 + x - xp1)) >> 15);
+        xp1 = x;
+        y2 = (int32_t)(((int64_t)A * (y2 + y1 - xp2)) >> 15);
+        xp2 = y1;
+        int32_t o = y2 >> 8;
+        buf[i] = (int16_t)(o > 32767 ? 32767 : o < -32768 ? -32768 : o);
+    }
+    hpf_xp1 = xp1; hpf_y1 = y1; hpf_xp2 = xp2; hpf_y2 = y2;
+}
