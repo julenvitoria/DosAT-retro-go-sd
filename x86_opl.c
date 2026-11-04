@@ -209,6 +209,10 @@ int x86_opl_active(void)
     return opl && (opl->slot_key_status || opl_live_slots());
 }
 
+extern uint32_t x86_pit_ticks(void);
+static uint16_t rst_mask;   /* channels keyed on by a muting reset, not yet aged */
+static uint32_t rst_t;      /* guest PIT time of the last such key-on */
+
 void x86_opl_write(uint8_t reg, uint8_t val)
 {
     /* BSS zero is not this chip's reset state and x86_io.c has no init entry
@@ -247,14 +251,57 @@ void x86_opl_write(uint8_t reg, uint8_t val)
     if (rhythm_on && reg >= 0xB6u && reg <= 0xB8u)
         val &= 0xDFu;
 
+    /*
+     * A MUTING KEY-ON. Westwood's AdLib driver (Dune II) resets a channel by
+     * keying it on with AR=DR=15 and SL=15 on both operators, then loads the
+     * real instrument (new DR, slow RR) and keys it OFF a millisecond or two
+     * later. On the chip the envelope falls at DR 15 -- 4 units of 511 per
+     * chip sample -- until the new DR lands: after ~1.6 ms the note is gone,
+     * after ~0.6 ms it is still ~-20 dB and rings on. Here every one of those
+     * writes lands between two renders and NO chip time passes, so each
+     * release started from FULL volume at the leftover fnum: ~15 Hz notes,
+     * the owner's "petardeo" after the Westwood logo (checked against
+     * Nuked-OPL3 replaying the same register log, 2026-11-04). So the reset
+     * is remembered, and the first envelope or frequency write to that
+     * channel applies the decay the elapsed GUEST time would have done.
+     */
+    if (rst_mask) {
+        static const uint8_t op_ch[22] = { 0, 1, 2, 0, 1, 2, 9, 9,
+                                           3, 4, 5, 3, 4, 5, 9, 9,
+                                           6, 7, 8, 6, 7, 8 };
+        unsigned ch = (reg >= 0xA0u && reg < 0xB9u) ? (reg & 0x0Fu)
+                    : (reg >= 0x60u && reg < 0x96u && ((reg - 0x60u) & 0x1Fu) < 22u)
+                      ? op_ch[(reg - 0x60u) & 0x1Fu] : 9u;
+        if (ch < 9u && ((rst_mask >> ch) & 1u)) {
+            uint32_t e = (x86_pit_ticks() - rst_t) / 6u;   /* 4 units per chip sample */
+            opl->slot[ch * 2u].eg_out = opl->slot[ch * 2u + 1u].eg_out =
+                (uint16_t)(e > OPL_EG_MAX ? OPL_EG_MAX : e);
+            rst_mask &= (uint16_t)~(1u << ch);
+        }
+    }
+
+    unsigned on = 9u;
     if ((reg & 0xF0u) == 0xB0u && (reg & 0x0Fu) < 9u) {
         unsigned ci = reg & 0x0Fu;
         uint8_t was = (uint8_t)((opl->reg[0xB0u + ci] >> 5) & 1u);
-        if (((val >> 5) & 1u) && !was)
+        if (((val >> 5) & 1u) && !was) {
             x86_opl_keyons++;
+            on = ci;
+        }
     }
 
     OPL_writeReg(opl, reg, val);
+
+    if (on < 9u) {
+        unsigned m = (on % 3u) + (on / 3u) * 8u;     /* modulator offset */
+        if ((opl->reg[0x60u + m] & 0x0Fu) == 0x0Fu &&
+            (opl->reg[0x63u + m] & 0x0Fu) == 0x0Fu &&
+            (opl->reg[0x80u + m] & 0xF0u) == 0xF0u &&
+            (opl->reg[0x83u + m] & 0xF0u) == 0xF0u) {
+            rst_mask |= (uint16_t)(1u << on);
+            rst_t = x86_pit_ticks();
+        }
+    }
 }
 
 /* One chunk of chip samples at 49,716 Hz. */
@@ -277,6 +324,7 @@ unsigned x86_opl_render_mix(int16_t *dst, unsigned frames,
 {
     uint32_t step;
 
+    rst_mask = 0;      /* chip time is passing now: nothing left to age */
     if (!opl || !frames || !sample_rate || !dst || !x86_opl_active()) {
         s0 = s1 = 0;               /* never hold a DC offset over silence */
         return 0;

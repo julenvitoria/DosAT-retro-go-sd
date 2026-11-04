@@ -221,7 +221,7 @@ static int16_t kl_tablex16[16] = {dB2x16(0.000), dB2x16(9.000), dB2x16(12.000), 
 #if !EMU8950_NO_TLL
 static uint32_t tll_table[8 * 16][1 << TL_BITS][4];
 #endif
-static int32_t rks_table[2][32][2];
+static uint8_t rks_table[2][32][2];   /* tinyemu: max (7<<1)+1 = 15; was int32_t, 384 B of RAM_UC */
 
 #define min(i, j) (((i) < (j)) ? (i) : (j))
 #define max(i, j) (((i) > (j)) ? (i) : (j))
