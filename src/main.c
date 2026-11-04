@@ -4437,6 +4437,46 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
     }
 }
 
+/*
+ * THE HUD'S SEVEN PALETTE SLOTS, VACATED (owner: "a smear behind the volume
+ * bars, in several games", 2026-11-04). While the volume / brightness / save
+ * HUD is up, the firmware's lcd_overlay_clut_begin() stamps its theme colours
+ * over CLUT slots 64..70 -- for a 256-colour cart there is nowhere else to put
+ * them -- and restores them when the HUD goes. Every guest pixel of colours
+ * 64..70, anywhere on the screen, took the HUD's whites and greys for those
+ * seconds. So while the HUD shows, this frame's pixels in that range are
+ * redrawn as their nearest colour outside it: the picture loses seven shades
+ * for two seconds instead of growing patches. One pass over the frame, only
+ * in 256-colour modes and only while the HUD is up; in ITCM because RAM_EMU
+ * had no room, and with no statics for the same reason.
+ */
+#define HUD_SLOT0 64u           /* LCD_OVERLAY_CLUT_BASE */
+#define HUD_SLOTS 7u            /* LCD_OVERLAY_CLUT_MAX */
+__attribute__((section(".itcram_hot.hud"), noinline, long_call))
+static void hud_vacate_slots(uint8_t *fb, const uint32_t *pal)
+{
+    uint8_t map[HUD_SLOTS];
+    for (unsigned k = 0; k < HUD_SLOTS; k++) {
+        uint32_t c = pal[HUD_SLOT0 + k], bd = 0xFFFFFFFFu;
+        unsigned best = 0;
+        for (unsigned j = 0; j < 256u; j++) {
+            if (j - HUD_SLOT0 < HUD_SLOTS)
+                continue;
+            int dr = (int)((c >> 16) & 255u) - (int)((pal[j] >> 16) & 255u);
+            int dg = (int)((c >> 8) & 255u) - (int)((pal[j] >> 8) & 255u);
+            int db = (int)(c & 255u) - (int)(pal[j] & 255u);
+            uint32_t d = (uint32_t)(dr * dr + dg * dg + db * db);
+            if (d < bd) { bd = d; best = j; }
+        }
+        map[k] = (uint8_t)best;
+    }
+    for (unsigned i = 0; i < FRAME_W * FRAME_H; i++) {
+        unsigned p = (unsigned)fb[i] - HUD_SLOT0;
+        if (p < HUD_SLOTS)
+            fb[i] = map[p];
+    }
+}
+
 static void emulator_loop(const gw_firmware_abi_t *abi)
 {
     /* Give the I/O layer the clock that timestamps speaker events BEFORE the
@@ -5181,6 +5221,11 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        Y arm above paints BOTH buffers on its own schedule and
                        does not get it: drawn into one of two buffers the bars
                        would flicker at the panel rate. */
+                    {
+                        const uint32_t *pal = x86_video_clut256();
+                        if (pal && common_emu_state.overlay)
+                            hud_vacate_slots((uint8_t *)fb, pal);
+                    }
                     abi->common_ingame_overlay();
                 }
             }
