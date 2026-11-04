@@ -1855,7 +1855,7 @@ static void sb_dac_render(int16_t *dst, unsigned frames, int16_t amplitude)
  * ahead of the speaker, as a real card's FIFO and buffer do. 4 KB of AHB; if
  * that allocation is refused the card is mute rather than wrong.
  */
-#define SB_RING 2048u                   /* int16 samples; > 1.5 x 800 */
+#define SB_RING 2048u                   /* int16 samples; >= 2.5 x 800 */
 static int16_t *sb_ring;
 static uint32_t sb_ring_w, sb_ring_r;
 
@@ -1863,7 +1863,7 @@ unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
                            int16_t amplitude)
 {
     sb_dac_render(dst, frames, amplitude);
-    if (!sb_ring || !frames || frames > SB_RING / 2u)
+    if (!sb_ring || !frames || frames > (SB_RING * 2u) / 5u)
         return 0;                       /* no ring: the card is mute, not wrong */
 
     unsigned n = 0;
@@ -1877,7 +1877,12 @@ unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
            played, and a DMA half shorter than the lead (Dune II's intro
            voices) was read before its refill -- stale data, the crackle that
            replaced the narrator (owner, 2026-11-04). */
-        uint32_t want = sbp.autoinit ? frames : frames + (frames >> 1);
+        /* 2.5 halves for single-cycle (was 1.5, 7e44bd7): the owner's MI2
+           talkie recording of 2026-11-04 still had 10-16 ms holes inside
+           words (11.6, 15.3, 34.1 s), i.e. the guest's next block came more
+           than the half-half margin late -- typically behind a MONSTER.SOU
+           read. 2,000 of the ring's 2,048 samples; ~25 ms more latency. */
+        uint32_t want = sbp.autoinit ? frames : 2u * frames + (frames >> 1);
         while (sb_ring_w - sb_ring_r < want) {
             while (sbp.frac >= 0x10000u) {
                 sbp.frac -= 0x10000u;
