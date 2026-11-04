@@ -128,7 +128,7 @@ extern uint32_t *guest_page_table_ptr;
 
 static uint8_t *guest_ram;
 static uint8_t *guest_vram;
-static char dsk_path[128];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03, RAM_EMU) */
+static char dsk_path[112];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03), -> 112 (2026-11-04): RAM_EMU */
 volatile uint32_t dsk_mounted = 0;
 volatile uint32_t dsk_exec_rc = 0xFFFFFFFF;
 volatile uint32_t dsk_startup_ok = 0;
@@ -1337,19 +1337,23 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
            fits" here left them a remainder that varied by title: Another
            World lost its FIFO when the ring came first, and Dune II (xms on,
            so one more fopen) lost the ring, which mutes every transfer and
-           took its intro voices (device, 2026-11-04). Halving the cache until
-           12 KB stays free costs at most one halving; a zero answer from an
-           older firmware keeps the old behaviour. */
+           took its intro voices (device, 2026-11-04). So 12 KB stays free.
+           That costs WHOLE WINDOWS, not a halving: a5ddab9 halved 64 -> 32 KB,
+           which x86_disk_cache_init() then refused outright (it took exactly
+           four windows), so the device most likely ran with NO cache -- and
+           the talkies' voices got their clicks back. A zero answer from an
+           older firmware keeps the full size. */
         uint32_t ahb_free = (uint32_t)abi->mem_ctl(GW_MEM_OP_FREE_SIZE,
                                                    GW_MEM_AHB, 0, 0);
+        const uint32_t win = X86_DISK_WINDOW_SECTORS * 512u;
         void *dc = NULL;
         uint32_t want = X86_DISK_CACHE_BYTES;
-        while (ahb_free && want >= 16384u && want + 12288u > ahb_free)
-            want /= 2u;
-        while (!dc && want >= 8192u) {
+        if (ahb_free && ahb_free < want + 12288u)
+            want = ahb_free > 12288u ? ((ahb_free - 12288u) / win) * win : 0u;
+        while (!dc && want >= 2u * win) {
             dc = (void *)abi->mem_ctl(GW_MEM_OP_ALLOC, GW_MEM_AHB, 1, want);
             if (!dc)
-                want /= 2u;
+                want -= win;
         }
         disk_cache_mem = (uint32_t)(uintptr_t)dc;
         x86_disk_cache_bytes = dc ? want : 0;
@@ -4378,8 +4382,7 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
            (silicon, PRINCE OF PERSIA: x86_audio_peak_max 495 -> 991 for
            the same 18 transfers) and the FM gain below was chosen against
            THIS card level rather than against the ducked one. The mix
-           clamps either way. */
-        x86_sb_render_mix(abuf, audio_frames, SAMPLE_RATE, amp);
+           clamps either way. It is called below, AFTER the high-pass. */
 #endif
         /* AND THE FM SYNTHESISER ON TOP OF BOTH, on the same clock and for
            the same reason: a title can play a digitised effect over its
@@ -4413,6 +4416,13 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
            the audio phase at all. Neither is inferable from the SB
            counters, and the difference is the whole question. */
         x86_audio_highpass(abuf, audio_frames);
+#if !X86_AUDIO_TONE
+        /* The card goes in AFTER the high-pass: the filter is for the FM
+           music's sub-bass, and speech kept its body without it -- the owner
+           heard the MI2 talkie voices better in a build that had no filter
+           (2026-11-04). */
+        x86_sb_render_mix(abuf, audio_frames, SAMPLE_RATE, amp);
+#endif
         x86_audio_submits++;
         int32_t pk = 0;
         for (unsigned i = 0; i < audio_frames; i++) {

@@ -38,6 +38,7 @@ SECTOR = 512
 WINDOW_SECTORS = 32
 WINDOW_COUNT = 4
 CACHE_BYTES = WINDOW_SECTORS * SECTOR * WINDOW_COUNT
+WINDOW_BYTES = WINDOW_SECTORS * SECTOR
 DISK_SECTORS = 2880            # a 1.44 MB floppy, which is what a .dsk is
 
 # A C shim, not a second implementation of the cache. It supplies the two
@@ -199,6 +200,10 @@ class Disk:
     def cache_ok(self):
         return self._u32("x86_disk_cache_ok")
 
+    @property
+    def cache_bytes(self):
+        return self._u32("x86_disk_cache_bytes")
+
 
 def check(cond, msg):
     if not cond:
@@ -225,8 +230,12 @@ def run(so):
     d.enable_cache()
     check(d.cache_ok == 1, "a sufficient buffer is accepted")
     d.enable_cache(CACHE_BYTES - 1)
-    check(d.cache_ok == 0, "an UNDERSIZED buffer is refused, loudly, not "
-                           "silently half-used")
+    check(d.cache_ok == 1 and d.cache_bytes == CACHE_BYTES - WINDOW_BYTES,
+          "a buffer one byte short of the full set backs one window fewer "
+          "(not none: no cache sends every sector to the card)")
+    d.enable_cache(2 * WINDOW_BYTES - 1)
+    check(d.cache_ok == 0, "a buffer under TWO windows is refused, loudly, "
+                           "not silently half-used")
     rc, got = d.read(10, 1)
     check(rc == 0 and got == d.expect(10, 1),
           "with the cache refused, reads still work (straight to the backend)")
