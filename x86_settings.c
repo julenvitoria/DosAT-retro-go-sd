@@ -125,7 +125,11 @@ static int x86_set_inited;
 static int x86_set_loaded[X86_SET_COUNT];
 
 typedef struct { unsigned long id; int val; } x86_set_pair_t;
-static x86_set_pair_t x86_set_unknown[X86_SETTINGS_MAX_PAIRS];
+/* Eight carried keys, not MAX_PAIRS (2026-11-04, RAM_EMU for the PIT one-shot):
+   a file holds at most a handful written by a newer build, and the ninth is
+   dropped the way the seventeenth always was. */
+#define X86_SET_UNKNOWN_MAX 8
+static x86_set_pair_t x86_set_unknown[X86_SET_UNKNOWN_MAX];
 static int x86_set_unknown_n;
 
 /*
@@ -389,7 +393,7 @@ x86_settings_status_t x86_settings_load(const unsigned char *buf, unsigned long 
             /* A setting this firmware does not have. Carried, not dropped:
                dropping it would mean a downgrade-then-upgrade silently loses
                the user's choices, and the pair costs eight bytes. */
-            if (x86_set_unknown_n < X86_SETTINGS_MAX_PAIRS) {
+            if (x86_set_unknown_n < X86_SET_UNKNOWN_MAX) {
                 x86_set_unknown[x86_set_unknown_n].id = id;
                 x86_set_unknown[x86_set_unknown_n].val = v;
                 x86_set_unknown_n++;
