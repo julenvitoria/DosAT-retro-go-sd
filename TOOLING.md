@@ -2605,8 +2605,17 @@ two the design had not: a straddling multi-sector read cost MORE backend calls
 than no cache at all, and an undersized buffer must be refused outright rather
 than half-used.
 
-All accept `--target gwemu|hardware`, `--gui`, `--audio`, `--icount`,
-`--timeline`, `--physical-sdcard`, `--keep-temp`.
+All accept `--target gwemu|hardware`, `--gui`, `--audio`, `--audio-wav FILE`,
+`--icount`, `--timeline`, `--physical-sdcard`, `--keep-temp`.
+
+`--audio-wav FILE` (gwemu) records what the emulated SAI1 plays through gwemu's
+own `wav` audiodev: 44.1 kHz stereo, the core's mono mix in both channels. The
+header is left unfinished when the run is stopped, so read it with
+`ffmpeg -i FILE -ac 1 -ar 48000 out.wav` rather than Python's `wave`. It is
+the device's output STREAM, not its timing: gwemu cannot keep the 60 Hz
+refill, so it replays stale halves (a ~50% repeat rate at a 1600-sample lag
+in Dune II's logo, with or without loading). Use it to hear WHAT is
+synthesised; repeated-half questions are tier 3 (a console recording).
 
 Each gwemu run copies the SD image and extflash (~66 MB) into `build/run/`,
 which is deleted on exit. `--keep-temp` retains it for analysis. Nothing is
