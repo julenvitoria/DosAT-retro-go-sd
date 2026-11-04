@@ -2614,7 +2614,7 @@ header is left unfinished when the run is stopped, so read it with
 `ffmpeg -i FILE -ac 1 -ar 48000 out.wav` rather than Python's `wave`. It is
 the device's output STREAM, not its timing: gwemu cannot keep the 60 Hz
 refill, so it replays stale halves (a ~50% repeat rate at a 1600-sample lag
-in Dune II's logo, with or without loading). Use it to hear WHAT is
+in Dune II's logo). Use it to hear WHAT is
 synthesised; repeated-half questions are tier 3 (a console recording).
 
 Each gwemu run copies the SD image and extflash (~66 MB) into `build/run/`,
