@@ -1871,7 +1871,14 @@ unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
         uint32_t step = (uint32_t)(((uint64_t)sbp.rate << 16) / sample_rate);
         if (!step)
             step = 1;
-        while (sb_ring_w - sb_ring_r < frames + (frames >> 1)) {
+        /* Ahead ONLY for single-cycle blocks, which are what leave the hole.
+           An AUTO-INIT transfer has no gap to cover, and running ahead of it
+           is wrong: a double-buffering driver refills the half that just
+           played, and a DMA half shorter than the lead (Dune II's intro
+           voices) was read before its refill -- stale data, the crackle that
+           replaced the narrator (owner, 2026-11-04). */
+        uint32_t want = sbp.autoinit ? frames : frames + (frames >> 1);
+        while (sb_ring_w - sb_ring_r < want) {
             while (sbp.frac >= 0x10000u) {
                 sbp.frac -= 0x10000u;
                 if (!sb_next_sample())
