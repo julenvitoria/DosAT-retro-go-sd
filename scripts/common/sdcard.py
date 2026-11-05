@@ -156,11 +156,11 @@ def push_tree(manager, local_dir):
             manager.push_file(os.path.join(root, name), remote)
 
 
-# Where dos386 looks for a title's .cfg: X86_CFG_DIR in src/main.c.
-CFG_DIR = "cores/dos386"
+# Where DosAT looks for a title's .cfg: X86_CFG_DIR in src/main.c.
+CFG_DIR = "cores/dosat"
 
 
-def compose(manager, core_bin=None, core_name="dos", rom=None, rom_dir="dos",
+def compose(manager, core_bin=None, core_name="dosat", rom=None, rom_dir="dos",
             config=None, content_dir=None, sidecars=True):
     """Lay out everything the firmware needs, onto any destination.
 
@@ -168,7 +168,7 @@ def compose(manager, core_bin=None, core_name="dos", rom=None, rom_dir="dos",
                  fonts the launcher renders empty frames and nothing else.
     core_bin     packed core -> /cores/<core_name>.bin (creates the system tab)
     rom          guest .dsk -> /roms/<rom_dir>/, with .dosmeta/.jpg sidecars;
-                 its .cfg -> /cores/dos386/
+                 its .cfg -> /cores/dosat/
     config       /CONFIG -- preselects the ROM and disables idle standby
     """
     if content_dir:
@@ -191,7 +191,7 @@ def compose(manager, core_bin=None, core_name="dos", rom=None, rom_dir="dos",
         if sidecars:
             for ext in (".cfg", ".dosmeta", ".jpg"):
                 if os.path.exists(base + ext):
-                    # the core reads a title's .cfg from /cores/dos386/
+                    # the core reads a title's .cfg from /cores/dosat/
                     where = CFG_DIR if ext == ".cfg" else f"roms/{rom_dir}"
                     manager.push_file(base + ext,
                                       f"{where}/{os.path.basename(base)}{ext}")

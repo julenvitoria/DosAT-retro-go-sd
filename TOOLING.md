@@ -6,7 +6,7 @@ new tooling pointed straight at silicon turns one unknown into two.
 | Tier | What it proves | Boots |
 |---|---|---|
 | 1. gwemu, bare-metal | CPU core in isolation | `test_core.elf` |
-| 2. gwemu + retro-go | Core inside the real firmware | retro-go + `dos.bin` |
+| 2. gwemu + retro-go | Core inside the real firmware | retro-go + `dosat.bin` |
 | 3. Real hardware | Timing, pipeline, SD behaviour | same image as tier 2 |
 
 gwemu is the basis throughout; plain QEMU adds nothing it does not already do.
@@ -740,7 +740,7 @@ than once. On this tree:
 | | |
 |---|---|
 | RAM_EMU | **+3,568 B** (the 2,848 B accumulator plus code) |
-| `dos.bin` | **+720 B** — code only. The block is deliberately uninitialised `.bss` so it does not *also* occupy the packed image |
+| `dosat.bin` | **+720 B** — code only. The block is deliberately uninitialised `.bss` so it does not *also* occupy the packed image |
 | hot path | **nothing.** One hash probe per INT service and per port access; never per guest instruction |
 
 `--skip-cost` skips the second clean build when the number is not wanted.
@@ -1499,7 +1499,7 @@ DTCM — the pool is the scarcest thing in the project):
 which are declared on every build so a host tool reads a truthful zero rather
 than failing to resolve a symbol. These two could not follow that rule: two more
 BSS accumulators shift the link, shifting address literals, and the shipping
-`dos.bin` stopped being byte-identical to master by 303 scattered bytes. A
+`dosat.bin` stopped being byte-identical to master by 303 scattered bytes. A
 profiling flag must not change the shipping binary at all, so on a clean build
 `probe.py --watch` simply fails to resolve them — which is the honest signal
 that the instrument is not compiled in. The same constraint is why
@@ -1713,7 +1713,7 @@ python3 scripts/sdcard.py --probe                      # device, over the probe
 
 Same content, three destinations. Lays down `sd_content` (fonts/lang/bios),
 `/cores/<name>.bin`, `/roms/<dir>/<rom>.dsk` + sidecars (a title's `.cfg` goes
-to `/cores/dos386/`, where the core reads it), and a `/CONFIG` that
+to `/cores/dosat/`, where the core reads it), and a `/CONFIG` that
 preselects the ROM and disables idle standby.
 
 ### `verify_placement.py` — check the target matches the build
@@ -1745,7 +1745,7 @@ python3 scripts/deploy_device.py --no-firmware    # core only (the inner loop)
 ```
 
 Flashes `gw_retro_go_intflash.bin` to internal flash and pushes
-`/cores/dos.bin` over the probe. **It never touches `/CONFIG`, `/roms` or
+`/cores/dosat.bin` over the probe. **It never touches `/CONFIG`, `/roms` or
 `sd_content`** — which is why this exists instead of `sdcard.py --probe`:
 compose rewrites `/CONFIG`, silently resetting the overclock level and
 preselected title the owner set through the launcher, and it would push the
@@ -1769,11 +1769,11 @@ Add `--hard-reset` to reboot into freshly flashed firmware.
 ```bash
 # a card for INTERACTIVE use: every DOS title, no preselection
 python3 scripts/sdcard.py --image build/sd-menu.img --no-config \
-    --core dos.bin --all-roms references/game-and-watch-retro-go-sd/roms/dos
+    --core dosat.bin --all-roms references/game-and-watch-retro-go-sd/roms/dos
 
 # populate an EXISTING card (e.g. one from a gwemu profile) instead of recreating
 python3 scripts/sdcard.py --image existing.img --keep --no-config \
-    --core dos.bin --all-roms references/game-and-watch-retro-go-sd/roms/dos
+    --core dosat.bin --all-roms references/game-and-watch-retro-go-sd/roms/dos
 ```
 
 `--rom` is repeatable and `--all-roms DIR` takes every `.dsk` in a directory,
@@ -1784,7 +1784,7 @@ auto-launches that title and still carries the others, which is what the OSK's
 disk menu ("A:" cap) needs to have something to list:
 
 ```bash
-python3 scripts/sdcard.py --image build/run/sd-swap.img --core dos.bin \
+python3 scripts/sdcard.py --image build/run/sd-swap.img --core dosat.bin \
     --rom .../ALLEYCAT.dsk --rom .../PRINCE.dsk --preselect ALLEYCAT.dsk
 ```
 
@@ -1802,7 +1802,7 @@ P=~/.local/share/gwemu/gwemu/profiles/<profile>
 cp "$P/sdcard.qcow2" "$P/sdcard.qcow2.bak"
 qemu-img convert -f qcow2 -O raw "$P/sdcard.qcow2" build/run/sd.img
 python3 scripts/sdcard.py --image build/run/sd.img --keep --no-config \
-    --core dos.bin --all-roms references/game-and-watch-retro-go-sd/roms/dos
+    --core dosat.bin --all-roms references/game-and-watch-retro-go-sd/roms/dos
 qemu-img convert -f raw -O qcow2 build/run/sd.img "$P/sdcard.qcow2.new"
 mv "$P/sdcard.qcow2.new" "$P/sdcard.qcow2"
 ```
@@ -1813,7 +1813,7 @@ mv "$P/sdcard.qcow2.new" "$P/sdcard.qcow2"
 # boot to the retro-go menu and drive it yourself (no ROM preselected)
 python3 scripts/sdcard.py --image build/sd-menu.img \
     --rom references/game-and-watch-retro-go-sd/roms/dos/KEEN4.dsk \
-    --core dos.bin --no-config
+    --core dosat.bin --no-config
 python3 scripts/gwemu_run.py --sd build/sd-menu.img
 
 # same, sampling counters every 3 s while you play

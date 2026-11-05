@@ -31,7 +31,7 @@ image, and whatever the game saves (saved games, settings) is written into it.
    `--autoexec` writes a one-line `AUTOEXEC.BAT` inside that starts that
    program. If you would rather say it in the `.cfg`, leave it out.
 4. Copy `MONKEY.dsk` to `/roms/dos/` and, if it has one, its `MONKEY.cfg` to
-   `/cores/dos386/`.
+   `/cores/dosat/`.
 
 ## Floppy or hard disk
 
@@ -51,7 +51,7 @@ It is also a way to leave free space for saved games. A floppy `.img` you
 already have works as it is: rename it to `.dsk`.
 
 **Without mtools** (for example on Windows without WSL): the other core's
-`tools/fat12.py` ([dos-retro-go-sd](https://github.com/julenvitoria/dos-retro-go-sd))
+`tools/fat12.py` ([DosXT-retro-go-sd](https://github.com/julenvitoria/DosXT-retro-go-sd))
 only needs Python 3 and does the same:
 
 ```

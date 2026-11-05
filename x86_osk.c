@@ -89,7 +89,7 @@ typedef struct {
 #define KS(lbl, sc)    { lbl, (sc), A_KEY }
 #define KA(lbl, act)   { lbl, 0, (act) }
 
-/* The SAME LAYOUT AS THE XTulator CORE'S (dos.bin) on-screen keyboard, so a
+/* The SAME LAYOUT AS THE XTulator CORE'S (DosXT, dosxt.bin) on-screen keyboard, so a
  * player moving between the two cores finds every key where it was: mixed-case
  * labels, capital letters, the arrows as glyphs after Spc, and a ':' cap of its
  * own (Shift+';' in one press -- typing "a:" without hunting for the sticky

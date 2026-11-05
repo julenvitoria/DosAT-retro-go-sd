@@ -8,12 +8,12 @@
 make -f Makefile.core pack
 ```
 
-Sale `dos.bin`; en la tarjeta se copia como `/cores/dos386.bin`. Lo que hace
+Sale `dosat.bin`, que en la tarjeta va en `/cores/`. Lo que hace
 falta, los scripts y las pruebas: [TOOLING.md](../TOOLING.md).
 
 ## Ramas
 
-- **`main`**: la versión de uso, la que se reparte como `dos386.bin`. Desde el
+- **`main`**: la versión de uso, la que se reparte como `dosat.bin`. Desde el
   30-10-2026 el chip AdLib, el ratón, la memoria flash y el archivo de
   intercambio van en la memoria que la pantalla deja libre en modo paleta
   (LUT8), y el juego tiene 158 páginas de 160. Necesita un firmware retro-go que

@@ -182,7 +182,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_target_args(p)
     p.add_argument("--firmware-dir", default=gs.FW_DIR)
-    p.add_argument("--core-bin", default="dos.bin")
+    p.add_argument("--core-bin", default="dosat.bin")
     p.add_argument("--core-elf", default="build/core/dos_core.elf")
     p.add_argument("--reuse-sd", action="store_true")
     p.add_argument("--boot-timeout", type=float, default=40.0)

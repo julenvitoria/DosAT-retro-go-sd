@@ -443,7 +443,7 @@ def main():
             continue
         add_target_args(sp)
         sp.add_argument("--firmware-dir", default=FW_DIR)
-        sp.add_argument("--core-bin", default="dos.bin",
+        sp.add_argument("--core-bin", default="dosat.bin",
                         help="packed core to put on the SD image")
         sp.add_argument("--core-elf", default="build/core/dos_core.elf")
         sp.add_argument("--reuse-sd", action="store_true",

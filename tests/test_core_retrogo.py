@@ -222,7 +222,7 @@ def main():
     p.add_argument("--elf", default="build/core/dos_core.elf",
                    help="core ELF, for symbol lookup")
     p.add_argument("--sd", default="sdcard_retrogo.img",
-                   help="SD image carrying /cores/dos.bin and /CONFIG")
+                   help="SD image carrying /cores/dosat.bin and /CONFIG")
     p.add_argument("--firmware-elf",
                    default="references/game-and-watch-retro-go-sd/build/"
                            "gw_retro_go.elf",
@@ -257,7 +257,7 @@ def main():
 
     # Fail loudly BEFORE booting: a core the firmware will not accept simply
     # never appears, which looks exactly like every other kind of failure.
-    if not abi_check("dos.bin", os.path.join(fw, "gw_retro_go.elf")):
+    if not abi_check("dosat.bin", os.path.join(fw, "gw_retro_go.elf")):
         return 1
 
     syms = get_symbols(args.elf)
