@@ -2620,7 +2620,6 @@ static int dos_int21_dispatch(uint8_t func)
         int dev = dos_name_is_device(path);
         if (dev) {
             if (dev == DOS_DEV_EMS)
-                x86_ems_device_opens++;
             x86_set_ax(DOS_DEV_HANDLE(dev));
             ok_clear_cf();
             return 1;

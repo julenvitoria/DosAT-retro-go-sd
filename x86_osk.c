@@ -289,7 +289,6 @@ static int16_t  mouse_x, mouse_y;
 static uint8_t  mouse_render = 1;
 static uint8_t  mouse_buttons;
 static uint16_t mouse_held[4];
-volatile uint32_t x86_mouse_clicks = 0;   /* button edges the UI produced */
 
 /* ---------------------------------------------------------------------------
  * Mode transitions -- the only place the mode changes
@@ -761,7 +760,6 @@ static void mouse_input(uint32_t now)
     if (now & X86_OSK_A) btn |= 2u;    /* right */
     if (btn != mouse_buttons) {
         mouse_buttons = btn;
-        x86_mouse_clicks++;
         x86_mouse_buttons(btn);
     }
 }
