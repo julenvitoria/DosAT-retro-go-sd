@@ -1996,6 +1996,18 @@ static int pgf_open_file(void)
  * position on entry belongs to whoever ran last. It is also what C requires
  * between a read and a write on the same update-mode stream.
  */
+/* A LOCKED XMS BLOCK'S ALIAS PAGES (8..16 MB) PAGE TO THE XMS STORE ITSELF.
+   Their offset from 8 MB is their byte offset in the store (XMS_LINEAR_BASE ==
+   XMS_FILE_BASE), which is what makes the alias coherent with AH=0Bh moves.
+   The slot ring (x86_pgfile) maps only the low 8 MB and the EMS window, so
+   these used to come back "unpageable": the writeback failed, the frame was
+   reused anyway, and the page refilled as ZEROES. DOS/4GW keeps its GDT/LDT
+   in such a block -- Dark Forces lost descriptors to it and took #GP on a
+   zero descriptor (445 x86_pgf_unpageable in one run, 2026-11-05). */
+#define XMS_ALIAS_FIRST_PAGE ((8u * 1024u * 1024u) / X86_PG_SIZE)  /* == XMS_FILE_BASE / 4 KB */
+static int xms_read(uint32_t off, void *dst, uint32_t bytes);
+static int xms_write(uint32_t off, const void *src, uint32_t bytes);
+
 static int pgf_write(uint32_t page, const void *src)
 {
     const gw_firmware_abi_t *abi = gw_firmware_abi();
@@ -2004,6 +2016,9 @@ static int pgf_write(uint32_t page, const void *src)
 
     if (!f)
         return -1;
+    if (page >= XMS_ALIAS_FIRST_PAGE)
+        return xms_write((page - XMS_ALIAS_FIRST_PAGE) * X86_PG_SIZE, src,
+                         X86_PG_SIZE);
     uint32_t slot = x86_pgf_slot_claim(page);
     if (slot == X86_PGF_NO_SLOT) { pgf_errors++; return -1; }
 
@@ -2042,6 +2057,9 @@ static int pgf_read(uint32_t page, void *dst)
 
     if (!f)
         return -1;
+    if (page >= XMS_ALIAS_FIRST_PAGE)
+        return xms_read((page - XMS_ALIAS_FIRST_PAGE) * X86_PG_SIZE, dst,
+                        X86_PG_SIZE);
     uint32_t slot = x86_pgf_slot_of(page);
     if (slot == X86_PGF_NO_SLOT) {
         /* FILE tier with no slot. The pager only sets FILE tier after a write
