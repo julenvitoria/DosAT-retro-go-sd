@@ -128,7 +128,7 @@ extern uint32_t *guest_page_table_ptr;
 
 static uint8_t *guest_ram;
 static uint8_t *guest_vram;
-static char dsk_path[112];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03), -> 112 (2026-11-04): RAM_EMU */
+static char dsk_path[128];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03, RAM_EMU) */
 volatile uint32_t dsk_mounted = 0;
 volatile uint32_t dsk_exec_rc = 0xFFFFFFFF;
 volatile uint32_t dsk_startup_ok = 0;
@@ -1815,11 +1815,7 @@ volatile uint32_t pgf_write_us_worst = 0;
  * the card's random-write behaviour and no amount of layout will move it.
  */
 volatile uint32_t pgf_ext_writes    = 0;   /* at/past the high-water mark */
-volatile uint32_t pgf_ext_us        = 0;
-volatile uint32_t pgf_ext_us_worst  = 0;
 volatile uint32_t pgf_inp_writes    = 0;   /* below it -- pure data */
-volatile uint32_t pgf_inp_us        = 0;
-volatile uint32_t pgf_inp_us_worst  = 0;
 volatile uint32_t pgf_high_water    = 0;   /* bytes, the largest offset+len */
 
 extern volatile uint32_t x86_disk_cycles_per_us;
@@ -1943,8 +1939,7 @@ static void pgf_bench(void)
     pgf_reads = pgf_writes = pgf_errors = 0;
     pgf_us_open = pgf_us_seek = pgf_us_write = pgf_us_read = 0;
     pgf_seek_us_worst = pgf_write_us_worst = 0;
-    pgf_ext_writes = pgf_ext_us = pgf_ext_us_worst = 0;
-    pgf_inp_writes = pgf_inp_us = pgf_inp_us_worst = 0;
+    pgf_ext_writes = pgf_inp_writes = 0;
     pgf_high_water = 0;
     x86_pgf_map_reset();
     xms_opens = 0;
@@ -1977,8 +1972,7 @@ static int pgf_open_file(void)
     pgf_reads = pgf_writes = pgf_errors = 0;
     pgf_us_open = pgf_us_seek = pgf_us_write = pgf_us_read = 0;
     pgf_seek_us_worst = pgf_write_us_worst = 0;
-    pgf_ext_writes = pgf_ext_us = pgf_ext_us_worst = 0;
-    pgf_inp_writes = pgf_inp_us = pgf_inp_us_worst = 0;
+    pgf_ext_writes = pgf_inp_writes = 0;
     pgf_high_water = 0;
     x86_pgf_map_reset();
     pgf_result = PGF_OK;
@@ -2026,9 +2020,6 @@ static int pgf_write(uint32_t page, const void *src)
     if (sought == 0 && abi->fwrite(src, 1, X86_PG_SIZE, f) == X86_PG_SIZE)
         rc = 0;
     pgf_acc(&pgf_us_write, &pgf_write_us_worst, DWT_CYCCNT - t1);
-    pgf_acc(extending ? &pgf_ext_us : &pgf_inp_us,
-            extending ? &pgf_ext_us_worst : &pgf_inp_us_worst,
-            DWT_CYCCNT - t0);           /* seek+write: what the frame pays */
     if (extending) pgf_ext_writes++; else pgf_inp_writes++;
     X86_ZONE_EXIT();
 
