@@ -471,6 +471,58 @@ day gets spent implementing something nothing asked for.
 Everything else stayed healthy: `x86_pg_exhausted=0`, `_evictions=0`,
 `x86_map_failures=0`, `core_ready=1`, `x86_xms_detects=0` (still never asked).
 
+## Star Wars: Dark Forces — MEASURED 2026-11-05 (FIFTH PASS, branch `dark-forces`): DOS/4GW is IN PROTECTED MODE, and dies of a #GP that moves
+
+Spanish CD (`df_es.iso`), the `DARK` folder as an 80 MB hard-disk `.dsk`
+(`make_dsk.py --size-mb 80 --autoexec DARK`), `.cfg` with `xms_kb = 8192`,
+tier 2, `probe.py --dos-log --io-log` plus temporary `dbg_*` captures in
+`fault()` (x86_pmode.c, NOT committed).
+
+**Two walls fell.**
+
+1. `"DOS/16M error: [2] not a DOS/16M executable 'C:\DOS4GW.EXE'"` was INT 21h
+   **AH=33h** left unanswered (CF=1 AX=1). The Watcom stub overlay-execs
+   DOS4GW (`4Bh/03`) with `C:\DARK.EXE` in the PSP tail and a fresh 5-para
+   environment at `9FFA`. DOS4GW then walks its own BW chain (EXPLOAD,
+   LINEXE, INT31W, WVMM, DOS4GW.EXP: offsets F2A4..30144, EOF at 3E0F4), all
+   of which is NORMAL. AH=33h is answered now (`d7061e6`).
+2. **Locked-XMS alias pages could not be paged out.** `x86_pgfile`'s slot ring
+   maps only the low 8 MB and the EMS window, so an evicted page of the 8..16 MB
+   alias was "unpageable" (445 in one run), lost, and refilled as zeroes.
+   DOS/4GW keeps its GDT/LDT in its XMS block (GDTR = `0x800010`, limit
+   `0x3FFF`; LDTR the same table). Fixed in `pgf_read/pgf_write` (`16bfc06`):
+   those pages go to the XMS store at their own offset. Now 0 unpageable,
+   0 io errors.
+
+**Where it stands.** 215 file calls, ~0.9-1.0 M instructions, A20 open, one
+XMS handle of 8,128 KB, `CR0.PE=1`, CPL 0. Then `X86_EXIT_GPF` (#13). **The
+error code CHANGES BETWEEN RUNS**: `0x100` at `3D18:2986`, `0x944` at
+`0080:0918`, and `0x7570` at `3D18:318B`. The last of those is
+`les bx,[bp-4]` in 16-bit PM code, with `[bp-4]` holding ASCII ("requ…")
+where a far pointer should be. **A fault that moves with timing is memory
+corruption driven by something asynchronous**, not a missing opcode.
+
+The GDT at the fault is sane: 0x08..0xB8 populated (0x30 = the stub's env at
+`9FFA0`, 0x58 a TSS, 0x80 code at `0x836010`…), and CS `0x3D18` is high in
+the table.
+
+**Suspects, in order (none verified yet):**
+- `MOV SS`/`POP SS` do NOT inhibit interrupts (a known semantic gap, STATUS.md).
+  An IRQ between `MOV SS` and `MOV (E)SP` pushes onto a mixed stack, and DOS/16M
+  switches stacks constantly. That would be timing-dependent exactly like this.
+- **The 8259 is half-modelled.** ICW1..4 are not decoded (an ICW2 written to
+  0x21 would land in the IMR), and the ISR is tracked for level 5 only. DOS/16M
+  reads it (`OUT 20h,0Bh` / `IN 20h`) to tell IRQ0 from a double fault on
+  vector 8. It did not reprogram the PIC in this run (`x86_pic_imr_writes`=0).
+- **Mode switching.** It arms CMOS shutdown code 9 (`OUT 70h,0Fh / OUT 71h,09h`)
+  around every switch and clears it after, the 286 return path kept as a
+  safety. No `0x64,0xFE` reset was seen, so the switch itself appears to be
+  `CR0`. There is no CMOS or reset emulation if that ever changes.
+
+**Diagnostics that cost RAM_EMU on main:** `X86_IO_LOG_SLOTS` is 2 and
+`x86_dos_path_log` holds 1. Raise both (and `DOS_FILE_LOG_SLOTS` to 64) in a
+throwaway build to see a whole startup.
+
 ## Star Wars: Dark Forces — MEASURED 2026-08-15 (FOURTH PASS): past the memory hunt, into file loading
 
 `probe_report.py --title darkforces --skip-cost`, gwemu, 30 s, same preset as
