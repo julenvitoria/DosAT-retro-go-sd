@@ -56,7 +56,7 @@ Upper or lower case does not matter.
 A name that is not in the table counts as an error and that button keeps its
 default key; the rest of the section still applies.
 
-**Differences from the XTulator core (`dos.bin`)**: there the long English
+**Differences from the XTulator core (`dosxt.bin`)**: there the long English
 aliases also work (`escape`, `return`, `control`, `insert`, `delete`, `minus`,
 `comma`…), plus `tabulador`, `numlock`, `scrolllock`, `keyboard`/`teclado` and
 `mup`/`mdown`/`mleft`/`mright`. They are not here because every byte of the core

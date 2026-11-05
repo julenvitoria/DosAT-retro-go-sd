@@ -68,7 +68,7 @@ def main():
                    help="copy the built media into DIR (banks padded to 256KB)")
     p.add_argument("--sd-image", default=None,
                    help="with --stage, use this SD image instead of the "
-                        "firmware's own (e.g. ours carrying /cores/dos.bin)")
+                        "firmware's own (e.g. ours carrying /cores/dosat.bin)")
     args = p.parse_args()
 
     extra = {}

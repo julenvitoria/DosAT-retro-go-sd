@@ -3,13 +3,13 @@
 *[Leer en español](cfg.md)*
 
 *Everything that can go in a game's `.cfg` for the TinyEMU core
-(`dos386.bin`). Back to the [README](../README.en.md).*
+(`dosat.bin`). Back to the [README](../README.en.md).*
 
 ## Where it goes
 
 Next to the image, with the same name: `/roms/dos/MONKEY.dsk` →
-`/cores/dos386/MONKEY.cfg`, in the core's folder, so it does not show up in the
-game menu and the other core (`dos.bin`, which reads `/cores/dos/`) can keep
+`/cores/dosat/MONKEY.cfg`, in the core's folder, so it does not show up in the
+game menu and the other core (DosXT, `dosxt.bin`, which reads `/cores/dosxt/`) can keep
 its own `.cfg` for the same game. A `.cfg` next to the image is no longer read. All of it is optional: with no `.cfg` the game starts
 with whatever its `.dsk`'s `AUTOEXEC.BAT` says, and with the default buttons.
 

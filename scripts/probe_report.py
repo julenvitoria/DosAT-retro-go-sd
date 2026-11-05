@@ -205,10 +205,10 @@ def build_core(rom, probe, quiet=False, core_flags=()):
     return {"core_bss_end": end, "ram_emu_end": ram_end,
             "region_left_bytes": (ram_end - end) if (end and ram_end) else None,
             "probe_block_bytes": s.get("x86_probe", (0, 0))[1],
-            "dos_bin_bytes": (os.path.getsize("build/core/dos.bin")
-                              if os.path.exists("build/core/dos.bin") else
-                              os.path.getsize("dos.bin")
-                              if os.path.exists("dos.bin") else 0)}
+            "dos_bin_bytes": (os.path.getsize("build/core/dosat.bin")
+                              if os.path.exists("build/core/dosat.bin") else
+                              os.path.getsize("dosat.bin")
+                              if os.path.exists("dosat.bin") else 0)}
 
 
 def measure_cost(rom, quiet, core_flags=()):

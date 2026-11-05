@@ -40,7 +40,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--firmware-dir", default=FW_DIR)
-    p.add_argument("--core", default="dos.bin", help="packed core .bin")
+    p.add_argument("--core", default="dosat.bin", help="packed core .bin")
     p.add_argument("--core-name", default="dos", help="-> /cores/<name>.bin")
     p.add_argument("--bank", type=int, default=1, choices=[1, 2],
                    help="internal flash bank the firmware was LINKED for")

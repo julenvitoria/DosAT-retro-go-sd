@@ -56,7 +56,7 @@ Da igual mayúsculas o minúsculas.
 Un nombre que no esté en la tabla cuenta como error y ese botón se queda con su
 tecla por defecto; el resto de la sección se aplica igual.
 
-**Diferencias con el núcleo XTulator (`dos.bin`)**: allí valen además los
+**Diferencias con el núcleo XTulator (`dosxt.bin`)**: allí valen además los
 alias en inglés largos (`escape`, `return`, `control`, `insert`, `delete`,
 `minus`, `comma`…), `tabulador`, `numlock`, `scrolllock`, `keyboard`/`teclado`
 y `mup`/`mdown`/`mleft`/`mright`. Aquí no están porque cada byte del núcleo es

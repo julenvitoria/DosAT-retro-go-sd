@@ -31,7 +31,7 @@ configuración) se escribe dentro de ella.
    `--autoexec` crea dentro un `AUTOEXEC.BAT` de una línea que arranca ese
    programa. Si prefieres decirlo en el `.cfg`, puedes omitirlo.
 4. Copia `MONKEY.dsk` a `/roms/dos/` y, si lo tiene, su `MONKEY.cfg` a
-   `/cores/dos386/`.
+   `/cores/dosat/`.
 
 ## Disquete o disco duro
 
@@ -51,7 +51,7 @@ También sirve para dejar sitio libre a las partidas guardadas. Una imagen de
 disquete `.img` que ya tengas vale tal cual: cámbiale la extensión a `.dsk`.
 
 **Sin mtools** (por ejemplo en Windows sin WSL): el `tools/fat12.py` del otro
-núcleo ([dos-retro-go-sd](https://github.com/julenvitoria/dos-retro-go-sd))
+núcleo ([DosXT-retro-go-sd](https://github.com/julenvitoria/DosXT-retro-go-sd))
 solo necesita Python 3 y hace lo mismo:
 
 ```

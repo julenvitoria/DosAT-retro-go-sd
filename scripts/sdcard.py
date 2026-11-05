@@ -50,8 +50,8 @@ def main():
                    help="image size when creating one (default: 128)")
     p.add_argument("--keep", action="store_true",
                    help="populate an existing image instead of recreating it")
-    p.add_argument("--core", default="dos.bin", help="packed core .bin")
-    p.add_argument("--core-name", default="dos", help="-> /cores/<name>.bin")
+    p.add_argument("--core", default="dosat.bin", help="packed core .bin")
+    p.add_argument("--core-name", default="dosat", help="-> /cores/<name>.bin")
     p.add_argument("--rom", action="append", default=None,
                    help="guest .dsk -> /roms/<dir>/. Repeatable: pass it once "
                         "per title to build a card with the whole library "

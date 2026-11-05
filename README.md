@@ -1,4 +1,4 @@
-# dos386: MS-DOS para la Game & Watch (retro-go SD)
+# DosAT: MS-DOS para la Game & Watch (retro-go SD)
 
 *[Read in English](README.en.md)*
 
@@ -11,15 +11,15 @@ en ensamblador para la consola.
 - CPU 386, gráficos CGA, EGA y VGA, sonido AdLib y Sound Blaster, ratón, y
   memoria EMS y XMS.
 - Para juegos de PC XT (8088, CGA) está el otro núcleo,
-  [dos-retro-go-sd](https://github.com/julenvitoria/dos-retro-go-sd)
-  (`dos.bin`). Los dos conviven en la misma tarjeta.
+  [DosXT-retro-go-sd](https://github.com/julenvitoria/DosXT-retro-go-sd)
+  (`dosxt.bin`). Los dos conviven en la misma tarjeta.
 
 ## En la tarjeta SD
 
 ```
-/cores/dos386.bin          <- el núcleo
+/cores/dosat.bin           <- el núcleo
 /roms/dos/MONKEY.dsk       <- cada juego, como imagen de disco .dsk
-/cores/dos386/MONKEY.cfg   <- su configuración (opcional), con el mismo nombre
+/cores/dosat/MONKEY.cfg    <- su configuración (opcional), con el mismo nombre
 ```
 
 ## Crear el `.dsk` de un juego
@@ -43,7 +43,7 @@ El `.cfg` es opcional y usa el formato de DOSBox. Un ejemplo completo, con lo
 que más se usa:
 
 ```ini
-; /cores/dos386/MONKEY.cfg
+; /cores/dosat/MONKEY.cfg
 
 [cpu]
 cycles = max          ; velocidad: max, o 330 (PC XT) … 4500 (386DX a 25 MHz)

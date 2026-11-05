@@ -28,7 +28,7 @@
  * out of it.
  *
  * THE USER-FACING LIST (Spanish, every accepted name, the differences from
- * dos.bin, and how to find which keys a game uses): docs/input/06-gamepad-keys.md.
+ * DosXT (dosxt.bin), and how to find which keys a game uses): docs/input/06-gamepad-keys.md.
  * Keep it in step with key_names[] in x86_pad.c.
  *
  * Keys: letters, digits, f1..f12, esc, enter, space, tab, backspace, shift,

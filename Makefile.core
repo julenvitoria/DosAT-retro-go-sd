@@ -1,6 +1,6 @@
 # Retro-Go SD external core — TinyEMU x86 DOS.
 #
-#   make -f Makefile.core          build + pack -> dos.bin
+#   make -f Makefile.core          build + pack -> dosat.bin
 #   make -f Makefile.core clean
 #
 # Mirrors the structure of the SDK template's root Makefile (identity here,
@@ -11,6 +11,8 @@
 
 PROJECT_KIND ?= core
 
+# Internal id: build/dos_core.elf, which every script reads. The packed file is
+# named for the card, below.
 CORE_NAME  := dos
 CORE_ENTRY := app_main
 
@@ -357,7 +359,8 @@ CORE_C_DEFS += $(EXTRA_CFLAGS)
 GNW_CORE_SDK ?= sdk
 BUILD_DIR ?= build/$(PROJECT_KIND)
 
-PACKED_BIN  := $(CORE_NAME).bin
+# /cores/dosat.bin (2026-11-05: was dos.bin)
+PACKED_BIN  := dosat.bin
 # Both logos are WHITE ON BLACK (the owner's style, 2026-10-30): white is
 # what the launcher draws in the theme colour. pack_core's default is the
 # other way round (dark = drawn), hence --logo-invert below.
@@ -385,7 +388,7 @@ x86_offsets.inc: offset.c x86_cpu.h cutils.h
 	rm -f offset_gen
 
 #######################################
-# Pack -> /cores/dos.bin, ROMs under /roms/dos/
+# Pack -> /cores/dosat.bin, ROMs under /roms/dos/
 #######################################
 PACK_CORE := $(GNW_CORE_SDK)/tools/pack_core.py
 
@@ -394,9 +397,9 @@ pack: $(TARGET_BIN) $(PAD_LOGO) $(HEADER_LOGO)
 	$(V)$(ECHO) [ PACK CORE ] $(PACKED_BIN)
 	$(V)python3 $(PACK_CORE) \
 		--elf $(TARGET_ELF) --bin $(TARGET_BIN) \
-		--system-name "DOS PC" --dirname dos \
+		--system-name "DosAT" --dirname dos \
 		--extensions "dsk" \
-		--core-name "TinyEMU x86" \
+		--core-name "DosAT (TinyEMU x86)" \
 		--version 0.1.0 \
 		--pad-logo $(PAD_LOGO) \
 		--header-logo $(HEADER_LOGO) \
