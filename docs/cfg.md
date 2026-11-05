@@ -3,7 +3,7 @@
 *[Read in English](cfg.en.md)*
 
 *Todo lo que se puede poner en el `.cfg` de un juego para el núcleo TinyEMU
-(`dos386.bin`). Vuelve al [README](../README.md#configuración-por-juego-cfg).*
+(`dos386.bin`). Vuelve al [README](../README.md).*
 
 ## Dónde va
 
@@ -72,12 +72,6 @@ para esos, un perfil lento.
 Son las mismas claves de DOSBox. Sin ellas está todo: AdLib y Sound Blaster.
 Una tarjeta quitada no responde, como una ranura vacía, y el juego pasa a la
 siguiente que conozca (normalmente el altavoz del PC).
-
-`oplmode = none` además **da memoria al juego** en `dos386.bin` (la versión
-normal): los ~3,6 KB del chip FM pasan a la memoria del juego, que gana una
-página (de 154 a 155 de 160). Úsalo en juegos que van con el altavoz del PC
-(Rick Dangerous, Alley Cat…). En `dos386_overlays.bin` el chip ya vive en la
-memoria extra y no cambia nada.
 
 ### `[autoexec]`
 
