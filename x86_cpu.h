@@ -618,9 +618,7 @@ int x86_disk_ready(void);
  */
 void x86_disk_stats_reset(void);
 extern volatile uint32_t x86_disk_reads;           /* disk_read() calls       */
-extern volatile uint32_t x86_disk_read_sectors;
 extern volatile uint32_t x86_disk_backend_reads;   /* reached the SD          */
-extern volatile uint32_t x86_disk_backend_sectors;
 extern volatile uint32_t x86_disk_us_total;
 extern volatile uint32_t x86_disk_us_worst;
 extern volatile uint32_t x86_disk_cycles_per_us;   /* measured by the core    */
@@ -767,8 +765,6 @@ extern volatile uint32_t x86_opl_t1_gap;
 extern volatile uint32_t x86_io_isa_ticks;
 /* Game port (0x200/0x201). Reads are the number that matters: WOLF3D issues
    2.35 M of them, more than everything sound-related combined. */
-extern volatile uint32_t x86_gameport_reads;
-extern volatile uint32_t x86_gameport_writes;
 extern volatile uint32_t x86_sb_resets;
 extern volatile uint32_t x86_sb_cmds;
 extern volatile uint32_t x86_pic_imr_now;

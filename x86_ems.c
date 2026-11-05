@@ -22,10 +22,8 @@ volatile uint32_t x86_ems_frame_refused;
 volatile uint32_t x86_ems_total_pages;
 volatile uint32_t x86_ems_used_pages;
 volatile uint32_t x86_ems_handles_used;
-volatile uint32_t x86_ems_device_opens;
 volatile uint32_t x86_ems_calls;
 volatile uint32_t x86_ems_maps;
-volatile uint32_t x86_ems_unmaps;
 volatile uint32_t x86_ems_map_fails;
 volatile uint32_t x86_ems_pinned_pages;
 volatile uint32_t x86_ems_last_err;
@@ -431,7 +429,6 @@ int x86_ems_int67(void)
             return ems_err(X86_EMM_BAD_HANDLE);
         if (bx == EMS_NO_PAGE) {                /* the documented unmap */
             ems_unmap_window(al);
-            x86_ems_unmaps++;
             return ems_ok();
         }
         if (bx >= h->count)

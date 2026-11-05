@@ -94,6 +94,5 @@ extern volatile uint32_t x86_osk_last_key;  /* (scancode << 8) | ascii    */
    rather than on a comment. */
 extern volatile uint32_t x86_osk_row_px_max;
 extern volatile uint32_t x86_osk_row_overflow;
-extern volatile uint32_t x86_mouse_clicks;  /* button edges the mouse UI made */
 
 #endif /* X86_OSK_H */

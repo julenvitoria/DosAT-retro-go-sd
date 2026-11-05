@@ -229,10 +229,8 @@ extern volatile uint32_t x86_ems_frame_refused;  /* the frame was NOT free   */
 extern volatile uint32_t x86_ems_total_pages;    /* what AH=42h advertises   */
 extern volatile uint32_t x86_ems_used_pages;     /* sum of live handles      */
 extern volatile uint32_t x86_ems_handles_used;
-extern volatile uint32_t x86_ems_device_opens;   /* EMMXXXX0 opened          */
 extern volatile uint32_t x86_ems_calls;          /* INT 67h calls serviced   */
 extern volatile uint32_t x86_ems_maps;           /* AH=44h, a page mapped    */
-extern volatile uint32_t x86_ems_unmaps;         /* AH=44h with BX=FFFFh     */
 extern volatile uint32_t x86_ems_map_fails;      /* a map we could not back  */
 extern volatile uint32_t x86_ems_pinned_pages;   /* 4 KB pages pinned NOW    */
 extern volatile uint32_t x86_ems_last_err;       /* last AH returned failing */

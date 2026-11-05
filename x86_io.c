@@ -228,8 +228,6 @@ volatile uint32_t x86_io_isa_ticks;     /* bus ticks charged on the FM ports */
 /* Game-port accesses. Reads are the interesting number -- WOLF3D issues 2.35 M
    of them -- and writes say whether the title is calibrating axes (it will not
    get anywhere; nothing is attached) or only reading the button bits. */
-volatile uint32_t x86_gameport_reads = 0;
-volatile uint32_t x86_gameport_writes = 0;
 
 /* Per-channel counter state. Channel 1 (DRAM refresh) is carried so the array
    indexes by channel number and nothing has to remember that 2 is really 1. */
@@ -2497,7 +2495,6 @@ static uint32_t port_read_inner(uint32_t port)
      */
     case 0x200:
     case 0x201:
-        x86_gameport_reads++;
         return 0xFFu;
     /* The counters. Not the reload value: see the PIT clock block above. */
     case 0x40:
@@ -2807,7 +2804,6 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
            with nothing attached they never time out, so there is no state to
            keep -- see the read side. Decoded so the write is not reported as
            unmodelled, and so a calibration loop's writes are counted. */
-        x86_gameport_writes++;
         break;
     case 0x40:
         pit_write_ch0((uint8_t)value);

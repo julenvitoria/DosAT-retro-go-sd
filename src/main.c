@@ -1526,7 +1526,6 @@ volatile uint32_t dsk_opens        = 0;   /* ONE per title if this is working */
 volatile uint32_t dsk_us_open      = 0;
 volatile uint32_t dsk_us_seek      = 0;
 volatile uint32_t dsk_us_read      = 0;
-volatile uint32_t dsk_us_write     = 0;
 volatile uint32_t dsk_seek_us_worst = 0;
 volatile uint32_t dsk_read_us_worst = 0;
 volatile uint32_t dsk_errors       = 0;
@@ -1668,7 +1667,6 @@ static int sd_sector_write(void *ctx, const void *src, uint32_t offset,
     if (!f) { dsk_errors++; return -1; }
     X86_ZONE_ENTER(X86_ZONE_DISK);          /* ZONES: see sd_sector_read */
     dsk_close_extras();     /* their stdio buffers would serve stale bytes */
-    uint32_t t0 = DWT_CYCCNT;
     if (abi->fseek(f, (long)offset, SEEK_SET) == 0 &&
         abi->fwrite(src, 1, len, f) == len)
         rc = 0;
@@ -1678,7 +1676,6 @@ static int sd_sector_write(void *ctx, const void *src, uint32_t offset,
        stdio's buffer. */
     if (rc == 0 && abi->fflush(f) != 0)
         rc = -1;
-    dsk_us_write += pgf_us(DWT_CYCCNT - t0);
     X86_ZONE_EXIT();
     if (rc != 0) dsk_errors++;
     return rc;
@@ -4439,13 +4436,14 @@ static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
  * seconds. So while the HUD shows, this frame's pixels in that range are
  * redrawn as their nearest colour outside it: the picture loses seven shades
  * for two seconds instead of growing patches. One pass over the frame, only
- * in 256-colour modes and only while the HUD is up; in ITCM because RAM_EMU
- * had no room, and with no statics for the same reason.
+ * in 256-colour modes and only while the HUD is up. In RAM_EMU, paid for by
+ * pure-diagnostic counters nothing read (2026-11-05); ITCM is full.
  */
 #define HUD_SLOT0 64u           /* LCD_OVERLAY_CLUT_BASE */
 #define HUD_SLOTS 7u            /* LCD_OVERLAY_CLUT_MAX */
-__attribute__((section(".itcram_hot.hud"), noinline, long_call))
-static void hud_vacate_slots(uint8_t *fb, const uint32_t *pal)
+__attribute__((noinline))
+static void hud_vacate_slots(uint8_t *fb, const uint32_t *pal,
+                             const uint8_t *src)
 {
     uint8_t map[HUD_SLOTS];
     for (unsigned k = 0; k < HUD_SLOTS; k++) {
@@ -4462,10 +4460,24 @@ static void hud_vacate_slots(uint8_t *fb, const uint32_t *pal)
         }
         map[k] = (uint8_t)best;
     }
-    for (unsigned i = 0; i < FRAME_W * FRAME_H; i++) {
-        unsigned p = (unsigned)fb[i] - HUD_SLOT0;
-        if (p < HUD_SLOTS)
-            fb[i] = map[p];
+    /* SCAN THE SOURCE, WRITE THE PANEL. The framebuffers are UNCACHED: the
+       first version read all 76,800 panel bytes back, several milliseconds a
+       frame, and the owner heard the music slow and click while the bars were
+       up (2026-11-05). The 13h aperture is the same picture (320x200, 20 rows
+       down) in cached memory, read a word at a time; a word with no byte in
+       64..71 is skipped on one test, and only the bytes that move are
+       written, as stores the bus buffers. */
+    const uint32_t *w = (const uint32_t *)src;
+    uint8_t *d = fb + 20u * FRAME_W;
+    for (unsigned i = 0; i < FRAME_W * 200u / 4u; i++) {
+        uint32_t t = (w[i] ^ 0x40404040u) & 0xF8F8F8F8u;
+        if (!((t - 0x01010101u) & ~t & 0x80808080u))
+            continue;
+        for (unsigned k = 0; k < 4u; k++) {
+            unsigned p = (unsigned)src[4u * i + k] - HUD_SLOT0;
+            if (p < HUD_SLOTS)
+                d[4u * i + k] = map[p];
+        }
     }
 }
 
@@ -5234,8 +5246,8 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        would flicker at the panel rate. */
                     {
                         const uint32_t *pal = x86_video_clut256();
-                        if (pal && common_emu_state.overlay)
-                            hud_vacate_slots((uint8_t *)fb, pal);
+                        if (pal && vga_aperture && common_emu_state.overlay)
+                            hud_vacate_slots((uint8_t *)fb, pal, vga_aperture);
                     }
                     abi->common_ingame_overlay();
                 }

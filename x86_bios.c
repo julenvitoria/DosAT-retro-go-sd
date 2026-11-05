@@ -287,12 +287,10 @@ uint8_t x86_kbd_ascii(uint8_t sc, int shift)
     return base;
 }
 
-volatile uint32_t x86_bios_kbd_irqs = 0;     /* INT 09h entries served */
 volatile uint32_t x86_bios_int16_calls = 0;  /* guest polls of INT 16h */
 
 int x86_bios_kbd_irq(void)
 {
-    x86_bios_kbd_irqs++;
     /* The BIOS handler EOIs its level -- the in-service bit is what keeps the
        controller from loading the next code under a handler still reading. */
     x86_pic_eoi_level(1);
@@ -678,11 +676,9 @@ int x86_bios_video(uint8_t func)
 /* The keyboard ring, for the DOS layer. INT 21h's console input functions read
    the same buffer INT 16h does -- on a real machine DOS goes through the BIOS,
    and a program that mixes the two must see one queue, not two. */
-volatile uint32_t x86_kb_get_calls = 0;   /* DOS/BIOS ring consumers */
-volatile uint32_t x86_kb_peek_calls = 0;
 
-int x86_kb_get(uint16_t *key)  { x86_kb_get_calls++;  return kb_pop(key); }
-int x86_kb_peek(uint16_t *key) { x86_kb_peek_calls++; return kb_peek(key); }
+int x86_kb_get(uint16_t *key)  { return kb_pop(key); }
+int x86_kb_peek(uint16_t *key) { return kb_peek(key); }
 
 int x86_bios_keyboard(uint8_t func)
 {
