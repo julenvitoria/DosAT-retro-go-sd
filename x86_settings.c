@@ -125,10 +125,7 @@ static int x86_set_inited;
 static int x86_set_loaded[X86_SET_COUNT];
 
 typedef struct { unsigned long id; int val; } x86_set_pair_t;
-/* Eight carried keys, not MAX_PAIRS (2026-11-04, RAM_EMU for the PIT one-shot):
-   a file holds at most a handful written by a newer build, and the ninth is
-   dropped the way the seventeenth always was. */
-#define X86_SET_UNKNOWN_MAX 8
+#define X86_SET_UNKNOWN_MAX X86_SETTINGS_MAX_PAIRS
 static x86_set_pair_t x86_set_unknown[X86_SET_UNKNOWN_MAX];
 static int x86_set_unknown_n;
 

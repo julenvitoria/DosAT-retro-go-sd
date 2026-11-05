@@ -621,8 +621,6 @@ extern volatile uint32_t x86_disk_reads;           /* disk_read() calls       */
 extern volatile uint32_t x86_disk_read_sectors;
 extern volatile uint32_t x86_disk_backend_reads;   /* reached the SD          */
 extern volatile uint32_t x86_disk_backend_sectors;
-extern volatile uint32_t x86_disk_cycles_last;
-extern volatile uint32_t x86_disk_cycles_worst;
 extern volatile uint32_t x86_disk_us_total;
 extern volatile uint32_t x86_disk_us_worst;
 extern volatile uint32_t x86_disk_cycles_per_us;   /* measured by the core    */
@@ -700,7 +698,7 @@ extern uint32_t x86_dos_file_calls;
 extern volatile uint32_t x86_io_log[];    /* X86_IO_LOG_SLOTS * 2, x86_io.c */
 extern volatile uint32_t x86_io_log_idx;
 extern volatile uint32_t x86_io_log_total;
-extern char x86_dos_path_log[1][20];
+extern char x86_dos_path_log[2][20];
 uint16_t *x86_hle_flags_on_stack(void);
 uint16_t dos_test_alloc(uint16_t paras, uint16_t *largest);
 uint16_t dos_test_free(uint16_t seg);

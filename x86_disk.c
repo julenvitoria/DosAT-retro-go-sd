@@ -56,8 +56,6 @@ volatile uint32_t x86_disk_reads;          /* disk_read() calls              */
 volatile uint32_t x86_disk_read_sectors;   /* sectors those calls asked for  */
 volatile uint32_t x86_disk_backend_reads;  /* calls that reached the backend */
 volatile uint32_t x86_disk_backend_sectors;
-volatile uint32_t x86_disk_cycles_last;
-volatile uint32_t x86_disk_cycles_worst;
 volatile uint32_t x86_disk_us_total;
 volatile uint32_t x86_disk_us_worst;
 volatile uint32_t x86_disk_cycles_per_us = 280;   /* set by the core at init */
@@ -225,8 +223,6 @@ void x86_disk_stats_reset(void)
     x86_disk_read_sectors = 0;
     x86_disk_backend_reads = 0;
     x86_disk_backend_sectors = 0;
-    x86_disk_cycles_last = 0;
-    x86_disk_cycles_worst = 0;
     x86_disk_us_total = 0;
     x86_disk_us_worst = 0;
     x86_disk_errors = 0;
@@ -316,9 +312,6 @@ static int backend_read(void *dst, uint32_t sector, uint32_t count)
 
     x86_disk_backend_reads++;
     x86_disk_backend_sectors += count;
-    x86_disk_cycles_last = dt;
-    if (dt > x86_disk_cycles_worst)
-        x86_disk_cycles_worst = dt;
     {
         uint32_t per_us = x86_disk_cycles_per_us;
         uint32_t us = per_us ? (dt / per_us) : 0u;
