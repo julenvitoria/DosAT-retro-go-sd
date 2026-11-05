@@ -50,6 +50,14 @@ python3 scripts/make_dsk.py --src RISKY --out RISKY.dsk --autoexec RISKY --size-
 También sirve para dejar sitio libre a las partidas guardadas. Una imagen de
 disquete `.img` que ya tengas vale tal cual: cámbiale la extensión a `.dsk`.
 
+**Sin mtools** (por ejemplo en Windows sin WSL): el `tools/fat12.py` del otro
+núcleo ([dos-retro-go-sd](https://github.com/julenvitoria/dos-retro-go-sd))
+solo necesita Python 3 y hace lo mismo:
+
+```
+python3 fat12.py todsk MONKEY MONKEY.dsk --run "MONKEY"
+```
+
 ## Qué programa arranca
 
 Por orden:
