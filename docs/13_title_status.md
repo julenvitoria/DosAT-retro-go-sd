@@ -506,7 +506,20 @@ The GDT at the fault is sane: 0x08..0xB8 populated (0x30 = the stub's env at
 `9FFA0`, 0x58 a TSS, 0x80 code at `0x836010`…), and CS `0x3D18` is high in
 the table.
 
-**Suspects, in order (none verified yet):**
+**UPDATE, same day: the fault is DETERMINISTIC now.** The tick arm no longer
+hands in an IRQ 0 while the previous one is still in service: an 8259 holds a
+level off until its EOI, and DOS/16M re-enables IF to reflect the tick before
+it EOIs. Two runs now stop identically at `3D18:2984` with error `0x100`.
+The code there is `pop ds; int 21h`, DS taken from a structure (`mov cx,[bx]`)
+and passed through a LAR-based "is this a segment?" check (`3D18:28EC`).
+Selector `0x100` is a null GDT slot: populated entries run 0x08..0xB8, plus
+DOS/16M's own high ones (`0x3D18` code at `0x81E270`, `0x3D28` data at
+`0x821A60`). So the next question is who should have built descriptor
+`0x100`, or why a selector that DOS/16M never created reached that structure.
+`3D18:28D7` reads a byte at `[[3D28:0938]:002F]` and compares it with 2,
+which looks like a machine/switch-mode choice worth reading first.
+
+**Earlier suspects, in order (the first two now look less likely):**
 - `MOV SS`/`POP SS` do NOT inhibit interrupts (a known semantic gap, STATUS.md).
   An IRQ between `MOV SS` and `MOV (E)SP` pushes onto a mixed stack, and DOS/16M
   switches stacks constantly. That would be timing-dependent exactly like this.

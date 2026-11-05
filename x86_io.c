@@ -371,6 +371,7 @@ static uint8_t pic_isr;
 
 void x86_pic_mark_in_service(unsigned level) { pic_isr |= (uint8_t)(1u << level); }
 void x86_pic_eoi_level(unsigned level)       { pic_isr &= (uint8_t)~(1u << level); }
+int  x86_pic_in_service(unsigned level)       { return (pic_isr >> level) & 1u; }
 
 static uint8_t sb_irq_pending_line(void);   /* the SB's line; see the sound block */
 static uint8_t pic_isr_bits(void);

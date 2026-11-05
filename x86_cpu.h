@@ -464,6 +464,7 @@ int x86_kbd_raise_irq(X86CPUState *cpu);
 void x86_kbd_latch_next(void);              /* host harness: load the next code */
 void x86_pic_mark_in_service(unsigned level);
 void x86_pic_eoi_level(unsigned level);      /* a BIOS HLE handler's own EOI */
+int  x86_pic_in_service(unsigned level);     /* 8259 ISR bit, for the tick arm */
 int x86_bios_kbd_irq(void);
 /* Scancode -> ASCII, the same decode INT 09h uses. Shared with the on-screen
    keyboard, whose echo line must show what the guest was actually sent. */

@@ -4216,6 +4216,12 @@ static void arm_tick_irq(void)
         guest_tick_irq_lost++;
         return;
     }
+    /* NOT WHILE THE LAST ONE IS IN SERVICE. An 8259 holds a level off until
+       its EOI, and a handler that re-enables IF before it EOIs (DOS/16M does,
+       to reflect the tick to real mode) relies on exactly that. The tick stays
+       OWED and goes in at the next arm after the EOI (Dark Forces, docs/13). */
+    if (x86_pic_in_service(0))
+        return;
     cpu_state_ptr->hard_int_pending = 0x08;
     x86_pic_mark_in_service(0);
     x86_pit_counter_forced(1);       /* NOT a raw store: see x86_pit_sync() */
