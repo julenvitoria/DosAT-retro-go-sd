@@ -3,7 +3,7 @@
 *[Leer en español](cfg.md)*
 
 *Everything that can go in a game's `.cfg` for the TinyEMU core
-(`dos386.bin`). Back to the [README](../README.en.md#per-game-configuration-cfg).*
+(`dos386.bin`). Back to the [README](../README.en.md).*
 
 ## Where it goes
 
@@ -60,6 +60,17 @@ profile for those.
 | `ems` | `true` / `false` | EMS memory (1 MB with `true`). |
 | `xms_kb` | KB | XMS of a specific size. |
 | `ems_kb` | KB, multiple of 16 | EMS of a specific size. |
+
+### `[sblaster]`
+
+| Key | Values | What it does |
+|---|---|---|
+| `oplmode` | `none`, or any model (`auto`, `opl2`, `opl3`…) | `none` = no FM chip: neither AdLib nor the Sound Blaster's FM music. |
+| `sbtype` | `none`, or any model (`sb16`, `sbpro2`…) | `none` = no Sound Blaster (and no `BLASTER` variable). |
+
+The same keys as DOSBox. Without them everything is there: AdLib and Sound
+Blaster. A removed card does not answer, like an empty slot, and the game moves
+on to the next one it knows (usually the PC speaker).
 
 ### `[autoexec]`
 
