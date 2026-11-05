@@ -2522,6 +2522,26 @@ static int dos_int21_dispatch(uint8_t func)
         x86_set_bx(psp_seg);
         return 1;
 
+    case 0x33: {                                /* Ctrl-Break flag, boot drive, true version */
+        /* DOS/4GW (Dark Forces) asks this while it starts; unanswered it got
+           CF=1 AX=1 back. AL=00 get / 01 set / 02 exchange the break flag (we
+           keep none: always "off"), 05 the boot drive (C: = 3), 06 the true
+           version: 5.00, revision 0, DOS not in the HMA. */
+        uint8_t al = (uint8_t)cpu_state_ptr->regs[0];
+        uint32_t *rd = &cpu_state_ptr->regs[2];          /* EDX */
+        if (al <= 2u)
+            *rd &= ~0xFFu;                               /* DL = 0 */
+        else if (al == 5u)
+            *rd = (*rd & ~0xFFu) | 3u;                   /* DL = C: */
+        else if (al == 6u) {
+            x86_set_bx(0x0005);
+            *rd &= ~0xFFFFu;
+        } else {
+            x86_set_ax(0x33FFu);                          /* AL=FF: bad subfunction */
+        }
+        return 1;
+    }
+
     case 0x30:                                  /* DOS version 5.00 */
         x86_set_ax(0x0005);
         x86_set_bx(0);
