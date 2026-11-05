@@ -50,6 +50,14 @@ python3 scripts/make_dsk.py --src RISKY --out RISKY.dsk --autoexec RISKY --size-
 It is also a way to leave free space for saved games. A floppy `.img` you
 already have works as it is: rename it to `.dsk`.
 
+**Without mtools** (for example on Windows without WSL): the other core's
+`tools/fat12.py` ([dos-retro-go-sd](https://github.com/julenvitoria/dos-retro-go-sd))
+only needs Python 3 and does the same:
+
+```
+python3 fat12.py todsk MONKEY MONKEY.dsk --run "MONKEY"
+```
+
 ## Which program starts
 
 In this order:
