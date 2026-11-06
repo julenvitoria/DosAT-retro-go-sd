@@ -928,7 +928,20 @@ static void vga13_blit(uint8_t *dst, uint32_t stride)
         } else {
             const unsigned head = (X86_MODEY_PLANE_OFFSETS - a) * 4u;
             memcpy(dst, pb + 4u * a, head);
-            memcpy(dst + head, pb, X86_VGA13_WIDTH - head);
+            if (x86_vga_modey_flat) {
+                /* Flat card: the rest of the row is the start of the NEXT
+                   16 K chunk, which is other storage, not this one again. */
+                const uint8_t *pb2;
+                uint32_t a2;
+                if (x86_vga_modey_row_at(start + y * pitch
+                                         + (X86_MODEY_PLANE_OFFSETS - a),
+                                         &pb2, &a2))
+                    memcpy(dst + head, pb2 + 4u * a2, X86_VGA13_WIDTH - head);
+                else
+                    memset(dst + head, 0, X86_VGA13_WIDTH - head);
+            } else {
+                memcpy(dst + head, pb, X86_VGA13_WIDTH - head);
+            }
         }
 #endif
     }
@@ -1564,6 +1577,12 @@ static void planar_storage_follow(uint8_t kind)
 #ifndef X86_MODEY_EXTRA_PAGES
 #define X86_MODEY_EXTRA_PAGES 2u
 #endif
+    /* The rung is per title now: `[video] vga_pages` in the .cfg (see
+       x86_settings.h, X86_SET_VGA_PAGES). This is the compiled default, and
+       what the harness gets; src/main.c overrides it. */
+    unsigned extra = x86_video_modey_extra_pages();
+    if (extra > 2u)
+        extra = 2u;                     /* 3 is "flat": the pages are two */
     /*
      * DONATE ONLY WHAT THE ARENA CANNOT ALREADY PLACE.
      *
@@ -1584,16 +1603,16 @@ static void planar_storage_follow(uint8_t kind)
      * MEASURED NO-OP TODAY: at the shipping rung the would_fit test is false
      * and the donation happens exactly as before (x86_pg_frames_total 126).
      */
-    if (X86_MODEY_EXTRA_PAGES
-        && !x86_arena_would_fit(X86_ARENA_ID_MODEYP, X86_MODEY_EXTRA_PAGES,
+    if (extra
+        && !x86_arena_would_fit(X86_ARENA_ID_MODEYP, extra,
                                 X86_MODEY_PAGE_BYTES))
-        x86_pager_donate_upto(X86_MODEY_EXTRA_PAGES * X86_MODEY_PAGE_BYTES,
+        x86_pager_donate_upto(extra * X86_MODEY_PAGE_BYTES,
                               X86_MODEY_PAGE_BYTES);
     void *pg[2] = { NULL, NULL };
-    if (X86_MODEY_EXTRA_PAGES >= 2u
+    if (extra >= 2u
         && x86_arena_claim(X86_ARENA_ID_MODEYP, 2, X86_MODEY_PAGE_BYTES, pg) == 0)
         x86_vga_modey_set_pages(pg[0], pg[1]);
-    else if (X86_MODEY_EXTRA_PAGES >= 1u
+    else if (extra >= 1u
              && x86_arena_claim(X86_ARENA_ID_MODEYP, 1, X86_MODEY_PAGE_BYTES,
                                 pg) == 0)
         x86_vga_modey_set_pages(pg[0], NULL);
@@ -1601,7 +1620,33 @@ static void planar_storage_follow(uint8_t kind)
         /* Loud by construction: x86_arena_deficit holds what the last refusal
            wanted and x86_vga_modey_pages stays 1. */
         x86_vga_modey_set_pages(NULL, NULL);
+    /* 3 = both pages AND the flat layout (x86_video_planar.c). */
+    x86_vga_modey_set_flat(x86_video_modey_layout_flat());
     x86_video_log_event(9, x86_vga_modey_pages, 0);
+}
+
+/* `[video] vga_pages = 3` (src/main.c): the flat card. */
+__attribute__((weak)) int x86_video_modey_layout_flat(void)
+{
+    return 0;
+}
+
+/* Whether the title's .cfg named `[video] vga_pages` (src/main.c); a pinned
+   rung is not given back by the shrink arm of x86_video_policy_tick(). */
+__attribute__((weak)) int x86_video_modey_pages_pinned(void)
+{
+    return 0;
+}
+
+/* How many extra Mode Y pages to fund. Weak: the core's frame loop overrides
+   it with the title's `[video] vga_pages`; anything else gets the build's. */
+__attribute__((weak)) unsigned x86_video_modey_extra_pages(void)
+{
+#ifndef X86_MODEY_EXTRA_PAGES
+    return 2u;
+#else
+    return X86_MODEY_EXTRA_PAGES;
+#endif
 }
 
 /*
@@ -1655,6 +1700,13 @@ void x86_video_policy_tick(void)
          * extra page with no frames donated at all, so this never fires.
          */
         if (act != X86_PG_POLICY_SHRINK || !x86_pg_donated)
+            return;
+        /* A title that ASKED for its pages in the .cfg keeps them: the shrink
+           took Epic Pinball's two extra pages while it loaded a table and
+           never gave them back, so the table scrolled through one aliased
+           page and every frame came out doubled. The .cfg line is the user
+           choosing the picture over the frames for that title. */
+        if (x86_video_modey_pages_pinned())
             return;
         x86_arena_release(X86_ARENA_ID_MODEYP);
         x86_vga_modey_set_pages(NULL, NULL);

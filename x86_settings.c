@@ -100,6 +100,10 @@ static const x86_setting_desc_t x86_setting_desc[X86_SET_COUNT] = {
     /* oplmode / sbtype: 1 = present (today's machine), 0 = `none`. */
     { "oplmode",      1, 0, 1 },
     { "sbtype",       1, 0, 1 },
+
+    /* vga_pages: extra Mode Y pages, 3 = both and the flat card. Default 1 is
+       X86_MODEY_EXTRA_PAGES. */
+    { "vga_pages",    1, 0, 3 },
 };
 
 /* String rows. Separate from the table above because they are .cfg-only and

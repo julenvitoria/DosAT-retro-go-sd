@@ -72,6 +72,16 @@ The same keys as DOSBox. Without them everything is there: AdLib and Sound
 Blaster. A removed card does not answer, like an empty slot, and the game moves
 on to the next one it knows (usually the PC speaker).
 
+### `[video]`
+
+| Key | Values | What it does |
+|---|---|---|
+| `vga_pages` | `0` to `3` | Extra video memory for games that use the "unchained" VGA mode (Mode X/Y). Without the key it is `1`, which suits almost all of them. `2` gives three whole screens (Wolfenstein 3D), at the cost of some of the game's memory. `3` is for games that **scroll the display through all of video memory**, like **Epic Pinball**: without it the table comes out doubled, with black lines, or black at the bottom. |
+
+When it is set, the core does not take that memory back even if the game is
+short of RAM: you chose the picture for that game. If a game loads more
+slowly with it, remove it.
+
 ### `[autoexec]`
 
 Which programs start. It is not a full `.bat` file: the core carries its own

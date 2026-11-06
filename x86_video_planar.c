@@ -536,6 +536,42 @@ void x86_vga_modey_set_pages(void *p1, void *p2)
     x86_vga_modey_pages = 1u + (modey_pgstore[0] != NULL)
                              + (modey_pgstore[1] != NULL);
     x86_vga_modey_alias_hits = 0;
+    x86_vga_modey_flat = 0;            /* a new set of pages is a new layout */
+}
+
+/*
+ * THE FLAT CARD (`[video] vga_pages = 3`).
+ *
+ * The page model above is Wolf3D's: three display pages 16,640 offsets apart,
+ * each stored in 16,384, and an off-screen cache above 0xC300. A title that
+ * SCROLLS through video memory instead -- Epic Pinball moves the display start
+ * down a table taller than the screen -- treats the 64 K plane offsets as one
+ * flat strip, and that model cuts it to pieces: every 16,640 offsets a band of
+ * 256 is thrown away (the thin black lines across the table), and everything
+ * past 0xC300 is "cache" the blit cannot show (the table went black when the
+ * ball dropped to the flippers).
+ *
+ * Flat is the plain map, chunk = a >> 14: the aperture, the two extra pages
+ * and the cache, in that order, 16,384 offsets each. Only the cache is short
+ * (X86_MODEY_CACHE_MAX), so the top 768 offsets of the card -- below the last
+ * row of a 256 KB card's worth of scrolling -- have no storage. It needs both
+ * extra pages; with fewer it is not turned on.
+ */
+volatile uint32_t x86_vga_modey_flat;
+
+void x86_vga_modey_set_flat(int on)
+{
+    x86_vga_modey_flat = (on && modey_pgstore[1]) ? 1u : 0u;
+}
+
+/* Where flat offset `a` lives, or NULL. Plane-major cell pointer, as vga_cell. */
+static inline uint8_t *modey_flat_cell(uint32_t a)
+{
+    uint32_t c = (a >> 14) & 3u, o = a & 0x3FFFu;
+
+    if (c == 3u)
+        return o < modey_cache_offs ? modey_cache + 4u * o : 0;
+    return (c ? modey_pgstore[c - 1u] : x86_vga_planar_aperture) + 4u * o;
 }
 
 /* ---------------------------------------------------------------------------
@@ -621,6 +657,8 @@ PLANAR_HOT static uint8_t *vga_cell(uint32_t a)
 #if X86_MODEY_PAGE_NEGCTL
     return x86_vga_planar_aperture + 4u * (a & X86_MODEY_MASK);
 #else
+    if (x86_vga_modey_flat)
+        return modey_flat_cell(a & 0xFFFFu);
     if (a >= X86_MODEY_CACHE) {
         a -= X86_MODEY_CACHE;
         if (a >= modey_cache_offs)
@@ -678,6 +716,16 @@ int x86_vga_modey_row_at(uint32_t a, const uint8_t **base, uint32_t *off)
     *off  = a & X86_MODEY_MASK;
     return 1;
 #else
+    if (x86_vga_modey_flat) {
+        /* `base` + 4*`off` is the cell; a row that crosses a 16 K chunk is
+           finished by the blit through a second call (see blit_vga13). */
+        uint8_t *c = modey_flat_cell(a & 0xFFFFu);
+        if (!c)
+            return 0;
+        *base = c - 4u * (a & 0x3FFFu);
+        *off  = a & 0x3FFFu;
+        return 1;
+    }
     if (!modey_split(a, &pg, &o))
         return 0;
     *base = modey_page_base(pg);
@@ -1836,7 +1884,7 @@ void x86_vga_planar_start_write(void)
 
     d = (s > modey_prev_start) ? s - modey_prev_start : modey_prev_start - s;
     modey_prev_start = s;
-    if (d >= X86_MODEY_PGMIN && d <= X86_MODEY_PGMAX
+    if (!x86_vga_modey_flat && d >= X86_MODEY_PGMIN && d <= X86_MODEY_PGMAX
         && (!modey_learned || d < x86_vga_modey_page)) {
         modey_learned = 1;
         x86_vga_modey_page = d;
