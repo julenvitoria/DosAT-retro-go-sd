@@ -71,6 +71,7 @@ X86CPUState *x86_cpu_init(PhysMemoryMap *mem_map)
 {
     // Return the statically allocated DTCM instance instead of dynamic allocation or KVM
     memset(&cpu_state_dtcm, 0, sizeof(X86CPUState));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     return &cpu_state_dtcm;
 }
 #endif

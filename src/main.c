@@ -1057,6 +1057,7 @@ static bool dtcm_state_init(void)
 static void run_benchmark(void)
 {
     memset(cpu_state_ptr, 0, sizeof(X86CPUState));
+    cpu_state_ptr->sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++) {
         cpu_state_ptr->segs[i].limit = 0xFFFFFFFF;
     }
@@ -2577,6 +2578,7 @@ int x86_osk_disk_insert(int i)
 static void guest_reset(void)
 {
     memset(cpu_state_ptr, 0, sizeof(X86CPUState));
+    cpu_state_ptr->sp_wrap = X86_SP_WRAP_16;
     /* A reset machine's system timer is at its boot divisor again. Leaving a
        previous guest's 140 Hz in place would run the next one's clock 7.7x
        fast, which is the same defect in the opposite direction. */

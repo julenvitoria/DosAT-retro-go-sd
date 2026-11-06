@@ -321,7 +321,7 @@
     .macro PUSH_V val, tsp, tptr
         LDR.W \tsp, [R8, #CPU_ESP]
         SP_DEC \tsp
-        SP_WRAP \tsp
+        SP_WRAP \tsp, \tptr
         STR.W \tsp, [R8, #CPU_ESP]
         LDR.W \tptr, [R8, #SEG_SS_BASE]
         ADD.W \tptr, \tptr, \tsp
@@ -344,7 +344,7 @@
         MEM_TRAP_R \dest
         LD_V \dest, \dest
         SP_INC \tsp
-        SP_WRAP \tsp
+        SP_WRAP \tsp, \tptr
         STR.W \tsp, [R8, #CPU_ESP]
     .endm
 
@@ -1404,13 +1404,13 @@ OP .op_ret_imm16_C2
     ADD.W R10, R4, R3              @ the popped value is an OFFSET
     LDR.W R4, [R8, #REG_ESP]
     ADD R4, R5
-    SP_WRAP R4
+    SP_WRAP R4, R12
     STR.W R4, [R8, #REG_ESP]
     B.W .fetch_decode_loop
 
 OP .op_leave_C9
     LDR.W R3, [R8, #REG_EBP]
-    SP_WRAP R3
+    SP_WRAP R3, R12
     STR.W R3, [R8, #REG_ESP]
     POP_V R3, R4, R12
     STREG_V R3, #REG_EBP
@@ -2703,7 +2703,7 @@ OP .op_popa_61
     STREG_V R3, #REG_EBP
     LDR.W R4, [R8, #REG_ESP]       @ step over the saved SP without using it
     SP_INC R4
-    SP_WRAP R4
+    SP_WRAP R4, R12
     STR.W R4, [R8, #REG_ESP]
     POP_V R3, R4, R12
     STREG_V R3, #REG_EBX
@@ -2824,7 +2824,7 @@ OP .op_enter_C8
     LDR.W R3, [R8, #REG_ESP]
     STREG_V R3, #REG_EBP
     SUB.W R3, R3, R5
-    SP_WRAP R3
+    SP_WRAP R3, R12
     STR.W R3, [R8, #REG_ESP]
     B.W .fetch_decode_loop
 
@@ -2863,7 +2863,7 @@ OP .op_retf_imm16_CA
     POP {R5, LR}
     LDR.W R4, [R8, #REG_ESP]
     ADD R4, R5
-    SP_WRAP R4
+    SP_WRAP R4, R12
     STR.W R4, [R8, #REG_ESP]
     B.W .fetch_decode_loop
 

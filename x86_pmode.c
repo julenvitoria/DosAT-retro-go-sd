@@ -280,6 +280,9 @@ void x86_pmode_sync_mode(X86CPUState *cpu)
 {
     int d = (cpu->segs[X86_CPU_SEG_CS].flags & X86_DESC_D_FLAG) != 0;
     cpu->opcode_table_base = x86_mode_table(d, d);
+    /* Back in real mode the stack is 16-bit whatever SS's cache still says. */
+    if (!(cpu->cr0 & 1u))
+        cpu->sp_wrap = X86_SP_WRAP_16;
 }
 
 /*
@@ -470,6 +473,11 @@ int x86_pmode_load_seg(X86CPUState *cpu, uint32_t seg, uint32_t sel)
     }
 
     decode_desc(s, sel, w1, w2);
+
+    /* The stack ADDRESS size is SS's B bit, for 16-bit code as much as for
+       32-bit code. See SP_WRAP in cpu_exec.S. */
+    if (seg == X86_CPU_SEG_SS)
+        cpu->sp_wrap = (s->flags & X86_DESC_D_FLAG) ? 0u : X86_SP_WRAP_16;
 
     if (seg == X86_CPU_SEG_CS) {
         /* CPL IS CS.RPL. Not the descriptor's DPL -- tiny386 has this right

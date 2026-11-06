@@ -18,14 +18,12 @@
 #ifndef X86_FONT8X8_H
 #define X86_FONT8X8_H
 
-/* In the core it lives in ITCM: RAM_EMU is guest frames, and the 64 KB ITCM
-   segment had ~3.7 KB unused past the interpreter. The CPU reads ITCM as data
-   at zero wait states; nothing DMAs from this table. */
-#if defined(X86_CORE_BUILD) && X86_CORE_BUILD
-#define FONT8X8_PLACE __attribute__((section(".itcram_hot.font8x8"), aligned(4)))
-#else
-#define FONT8X8_PLACE
-#endif
+/* It used to live in ITCM, which had ~3.7 KB spare past the interpreter. It
+   does not any more: the interpreter grew into that space (SS's B bit on
+   every 16-bit push and pop, 2026-11), and a font read once per text cell
+   per frame does not need zero-wait memory as much as the opcode handlers do.
+   It costs RAM_EMU 2 KB, which is half a guest page frame. */
+#define FONT8X8_PLACE __attribute__((aligned(4)))
 
 static const unsigned char font8x8_basic[256][8] FONT8X8_PLACE = {
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   /* 0x00 U+0000 */
