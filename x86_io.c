@@ -862,9 +862,16 @@ static void spk_lv_render(int16_t *dst, unsigned frames, int16_t amplitude)
     if (spk_lv_head == spk_lv_tail && !lvl)
         return;                          /* silent and nothing changed */
 
+    /* No division per sample: the boundaries step by a 16.16 increment and
+       the level is normalised by one reciprocal (span <= 298,295 ticks, so
+       the products fit in 64 bits). */
+    uint32_t step = (uint32_t)(((uint64_t)span << 16) / frames);
+    int32_t  gain = (int32_t)(((int64_t)amplitude << 16) / (int32_t)(step >> 16 ? step >> 16 : 1));
+    uint64_t pos = 0;
     uint32_t b0 = 0;                     /* tick offset of this sample's start */
     for (unsigned i = 0; i < frames; i++) {
-        uint32_t b1 = (uint32_t)(((uint64_t)span * (i + 1u)) / frames);
+        pos += step;
+        uint32_t b1 = (i + 1u == frames) ? span : (uint32_t)(pos >> 16);
         uint32_t acc = 0, at = b0;
         while (spk_lv_head != spk_lv_tail) {
             uint32_t e = spk_lv_buf[spk_lv_head & (SPK_LV_RING - 1u)];
@@ -882,7 +889,9 @@ static void spk_lv_render(int16_t *dst, unsigned frames, int16_t amplitude)
         }
         if (lvl) acc += b1 - at;
         if (acc && b1 > b0) {
-            int32_t o = dst[i] + (int32_t)(((int64_t)acc * amplitude) / (int32_t)(b1 - b0));
+            int32_t v = (int32_t)(((int64_t)acc * gain) >> 16);
+            if (v > amplitude) v = amplitude;
+            int32_t o = dst[i] + v;
             dst[i] = (int16_t)(o > 32767 ? 32767 : o < -32768 ? -32768 : o);
         }
         b0 = b1;
@@ -2002,6 +2011,8 @@ static void sb_dac_render(int16_t *dst, unsigned frames, int16_t amplitude)
 #define SB_RING 2048u                   /* int16 samples; >= 2.5 x 800 */
 static int16_t *sb_ring;
 static uint32_t sb_ring_w, sb_ring_r;
+static int32_t  sb_prev;                /* the sample before sbp.last */
+static uint8_t  sb_prime;               /* next fetch starts a transfer: no ramp in */
 
 unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
                            int16_t amplitude)
@@ -2030,10 +2041,23 @@ unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
         while (sb_ring_w - sb_ring_r < want) {
             while (sbp.frac >= 0x10000u) {
                 sbp.frac -= 0x10000u;
+                sb_prev = sbp.last;
                 if (!sb_next_sample())
                     goto done;
+                if (sb_prime) {         /* a transfer's first sample: held,
+                                           not ramped in from the last one */
+                    sb_prev = sbp.last;
+                    sb_prime = 0;
+                }
             }
-            sb_ring[sb_ring_w++ & (SB_RING - 1u)] = sbp.last;
+            /* Linear, not a zero-order hold (2026-11-06): an 8 kHz effect
+               held for six output samples puts its images at 8 kHz +- f at
+               nearly full level -- the harsh, "distorted" Risky Woods
+               effects against a DOSBox recording. Between the previous and
+               the current sample at the accumulator's fraction: one sample
+               of latency, one multiply. */
+            sb_ring[sb_ring_w++ & (SB_RING - 1u)] = (int16_t)(sb_prev +
+                (((int32_t)sbp.last - sb_prev) * (int32_t)sbp.frac >> 16));
             n++;
             sbp.frac += step;
         }
@@ -2071,6 +2095,7 @@ static void sb_start_fmt(uint8_t bits16, uint8_t autoinit, uint8_t stereo,
                          uint8_t sign, uint8_t silent, uint32_t samples,
                          uint8_t adpcm_fmt, uint8_t ref)
 {
+    sb_prime = 1;
     /* The output ring is taken at the FIRST DMA transfer, not at the first
        refill: the AHB heap is small on the device, and taking it up front
        left the direct-DAC FIFO (sb_dac_put) nothing -- Another World, which

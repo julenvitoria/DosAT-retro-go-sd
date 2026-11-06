@@ -419,6 +419,12 @@ static int cfg_autoexec_command(const unsigned char *s, const unsigned char *e)
                                 (unsigned long)(e - tail));
 }
 
+/* Runs once, at load: cold code, out of RAM_EMU where the dos_core.ld routes
+   `.text.__uc.*` to RAM_UC (X86_UC_TEXT in x86_cpu.h, spelt out here because
+   this file stays free of the CPU headers). 1.4 KB back for the guest pool --
+   the 16 bytes the SB resampler cost on 2026-11-06 had moved the pool's
+   claim past a 4 KB boundary and lost a whole frame (157 -> 156). */
+__attribute__((section(".text.__uc.x86_cfg_parse"), noinline))
 x86_cfg_status_t x86_cfg_parse(const unsigned char *buf, unsigned long len,
                                x86_cfg_result_t *out)
 {
