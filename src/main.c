@@ -4050,6 +4050,26 @@ static void modey_paint_both(const gw_firmware_abi_t *abi)
     X86_VPROF_END(pt, paint);
 }
 
+/* The title's `[video] vga_pages`, or the build's default when the .cfg does
+   not name it. See X86_SET_VGA_PAGES in x86_settings.h. */
+int x86_video_modey_layout_flat(void)
+{
+    return x86_settings_base_is_set(X86_SET_VGA_PAGES)
+        && x86_settings_get(X86_SET_VGA_PAGES) == 3;
+}
+
+int x86_video_modey_pages_pinned(void)
+{
+    return x86_settings_base_is_set(X86_SET_VGA_PAGES);
+}
+
+unsigned x86_video_modey_extra_pages(void)
+{
+    if (x86_settings_base_is_set(X86_SET_VGA_PAGES))
+        return (unsigned)x86_settings_get(X86_SET_VGA_PAGES);
+    return X86_MODEY_EXTRA_PAGES;
+}
+
 void x86_video_page_flip(void)
 {
 #if X86_MODEY_PRESENT_ON_FLIP

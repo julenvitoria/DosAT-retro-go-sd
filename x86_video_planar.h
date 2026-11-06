@@ -131,6 +131,16 @@ int x86_vga_modey_row_at(uint32_t a, const uint8_t **base, uint32_t *off);
    known good. Weak in x86_video_planar.c so the tier-1 harness and any link
    with no LCD still resolve; the frame loop overrides it. */
 void x86_video_page_flip(void);
+/* Extra Mode Y pages to fund (0..2). Weak in x86_video.c (the build's
+   X86_MODEY_EXTRA_PAGES); src/main.c returns the title's [video] vga_pages. */
+unsigned x86_video_modey_extra_pages(void);
+/* 1 when the .cfg named it: the policy's shrink arm leaves those pages alone. */
+int x86_video_modey_pages_pinned(void);
+/* `[video] vga_pages = 3`: one flat 64 K-offset card (Epic Pinball's scroll)
+   instead of Wolf3D's three pages; needs both extra pages. */
+void x86_vga_modey_set_flat(int on);
+int x86_video_modey_layout_flat(void);
+extern volatile uint32_t x86_vga_modey_flat;
 
 /* ---- the presentation policy, and why it is HERE and not in the frame loop -
  *
