@@ -1591,8 +1591,8 @@ static void planar_storage_follow(uint8_t kind)
        x86_settings.h, X86_SET_VGA_PAGES). This is the compiled default, and
        what the harness gets; src/main.c overrides it. */
     unsigned extra = x86_video_modey_extra_pages();
-    if (extra > 2u)
-        extra = 2u;                     /* 3 is "flat": the pages are two */
+    if (extra > 3u)
+        extra = 3u;                     /* 3 = the flat card, three pages */
     /*
      * DONATE ONLY WHAT THE ARENA CANNOT ALREADY PLACE.
      *
@@ -1618,8 +1618,12 @@ static void planar_storage_follow(uint8_t kind)
                                 X86_MODEY_PAGE_BYTES))
         x86_pager_donate_upto(extra * X86_MODEY_PAGE_BYTES,
                               X86_MODEY_PAGE_BYTES);
-    void *pg[2] = { NULL, NULL };
-    if (extra >= 2u
+    void *pg[3] = { NULL, NULL, NULL };
+    if (extra >= 3u
+        && x86_arena_claim(X86_ARENA_ID_MODEYP, 3, X86_MODEY_PAGE_BYTES, pg) == 0) {
+        x86_vga_modey_set_pages(pg[0], pg[1]);
+        x86_vga_modey_set_page3(pg[2]);
+    } else if (extra >= 2u
         && x86_arena_claim(X86_ARENA_ID_MODEYP, 2, X86_MODEY_PAGE_BYTES, pg) == 0)
         x86_vga_modey_set_pages(pg[0], pg[1]);
     else if (extra >= 1u
@@ -1630,7 +1634,7 @@ static void planar_storage_follow(uint8_t kind)
         /* Loud by construction: x86_arena_deficit holds what the last refusal
            wanted and x86_vga_modey_pages stays 1. */
         x86_vga_modey_set_pages(NULL, NULL);
-    /* 3 = both pages AND the flat layout (x86_video_planar.c). */
+    /* 3 = three pages AND the flat layout (x86_video_planar.c). */
     x86_vga_modey_set_flat(x86_video_modey_layout_flat());
     x86_video_log_event(9, x86_vga_modey_pages, 0);
 }

@@ -144,6 +144,7 @@ int x86_video_modey_pages_pinned(void);
 /* `[video] vga_pages = 3`: one flat 64 K-offset card (Epic Pinball's scroll)
    instead of Wolf3D's three pages; needs both extra pages. */
 void x86_vga_modey_set_flat(int on);
+void x86_vga_modey_set_page3(void *p);
 int x86_video_modey_layout_flat(void);
 extern volatile uint32_t x86_vga_modey_flat;
 

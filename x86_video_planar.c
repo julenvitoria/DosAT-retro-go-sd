@@ -336,6 +336,7 @@ static uint32_t  modey_cache_offs;  /* plane offsets it holds                */
    NULL means that page is still ALIASED onto page 0 -- the old behaviour, and
    the defect this whole path exists to remove. */
 static uint8_t  *modey_pgstore[2];
+static uint8_t  *modey_page3;      /* the flat card's fourth 16 K chunk     */
 
 static uint32_t  modey_prev_start;
 static int       modey_learned;
@@ -537,6 +538,7 @@ void x86_vga_modey_set_pages(void *p1, void *p2)
                              + (modey_pgstore[1] != NULL);
     x86_vga_modey_alias_hits = 0;
     x86_vga_modey_flat = 0;            /* a new set of pages is a new layout */
+    modey_page3 = NULL;                /* set after this, by its own call */
 }
 
 /*
@@ -559,18 +561,32 @@ void x86_vga_modey_set_pages(void *p1, void *p2)
  */
 volatile uint32_t x86_vga_modey_flat;
 
+void x86_vga_modey_set_page3(void *p)
+{
+    modey_page3 = (uint8_t *)p;
+    if (modey_page3)
+        memset(modey_page3, 0, 4u * X86_MODEY_PLANE);
+}
+
 void x86_vga_modey_set_flat(int on)
 {
     x86_vga_modey_flat = (on && modey_pgstore[1]) ? 1u : 0u;
 }
 
-/* Where flat offset `a` lives, or NULL. Plane-major cell pointer, as vga_cell. */
+/* Where flat offset `a` lives, or NULL. Plane-major cell pointer, as vga_cell.
+   The fourth chunk is its own page when one was funded (vga_pages = 3), and
+   the off-screen cache otherwise -- which is 768 offsets short, and Epic
+   Pinball parks the backgrounds of its dot-matrix messages exactly there:
+   56 K lost stores and the messages left their dots on the table. */
 static inline uint8_t *modey_flat_cell(uint32_t a)
 {
     uint32_t c = (a >> 14) & 3u, o = a & 0x3FFFu;
 
-    if (c == 3u)
+    if (c == 3u) {
+        if (modey_page3)
+            return modey_page3 + 4u * o;
         return o < modey_cache_offs ? modey_cache + 4u * o : 0;
+    }
     return (c ? modey_pgstore[c - 1u] : x86_vga_planar_aperture) + 4u * o;
 }
 
