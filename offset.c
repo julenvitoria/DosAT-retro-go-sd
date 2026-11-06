@@ -98,6 +98,7 @@ int main(void)
     EMIT("CPU_SEAM_N",       offsetof(X86CPUState, seam_n));
     EMIT("CPU_CODE_K",       offsetof(X86CPUState, code_k));
     EMIT("CPU_TABLE_BASE",       offsetof(X86CPUState, opcode_table_base));
+    EMIT("CPU_SP_WRAP",          offsetof(X86CPUState, sp_wrap));
     printf("\n    .equ %-24s, %zu\n", "CPU_STATE_SIZE", sizeof(X86CPUState));
 
     /* Device state. Separate struct, but the test harness reads it over the

@@ -395,6 +395,14 @@ def main(args):
             # LAR/LSL/VERR/VERW NEVER FAULT. The only two refusals in the
             # whole V-Z block are LTR's.
             ("the inspection arms raised nothing",  r[163], 2),
+            # ---- 16-bit code on a BIG (B=1) stack -----------------------
+            # The stack address size is SS's B bit, not the code's: DOS/16M
+            # pops a DOS/4GW program's frame off its flat stack from 16-bit
+            # code. A wrapped SP dropped ESP's top half after the first pop.
+            ("16-bit push/pop on a big SS ran",      r[164], HALT),
+            ("  ... ESP kept its top half",          r[165], 0x12000),
+            ("  ... and popped what it pushed",      r[166], 0x12345678),
+            ("  ... through all of ESP",             r[167], 0x5678),
         ]
 
         bad = 0

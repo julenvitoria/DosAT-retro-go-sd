@@ -545,9 +545,31 @@ DOS/4GW 32-bit stack). The rewind point now backs over the 66/67/segment
 prefixes R2 and R6 show were taken. Test: `67 REP 66 MOVSD survives the
 batch-cap rewind` (300 dwords above 64 KB), seen to FAIL without the fix.
 
-Where it stands (tier 2, 58 s cap): the DOS/4GW banner, then DOS/16M keeps
-reading the game (749 file calls by t+53 s and still climbing at t+51) with
-CR0.PG never set. gwemu is slow at this; the device should show more.
+Where it stood after that (tier 2, 58 s cap): the DOS/4GW banner, then
+DOS/16M keeps reading the game (749 file calls by t+53 s) with CR0.PG never
+set.
+
+**SECOND BUG, 2026-11-06: a 16-bit push/pop wrapped SP on a BIG stack.** On
+the device it sat on the banner for minutes. Not a hang: past 749 file calls
+DOS/16M applies DARK.EXE's LE fixups (220 pages, 260 KB of fixup records --
+the 424-instruction period sampled at 0x3DB8:4310..48F4 is its record loop,
+and the record pointer was seen walking forward), which takes ~45 s of
+tier 2. (This needed one run past the 60 s timeline cap -- deliberately, once,
+because the question was what happens AFTER a long legitimate load.) Then
+#GP at `0080:06CB` err `0xCCCC`: the reflection return now switched to the
+program's flat stack (`SS=0x150`, B=1, `ESP=0x9ADBE6`) and popped DS, ES...
+from 16-bit code. The 16-bit pass's `SP_WRAP` was a UXTH, so after the first
+pop ESP was `0xDBE8` and the next pop read the untouched 0xCC fill below
+64 KB. The stack ADDRESS size is SS's B bit, not the code's: `SP_WRAP` now
+BICs `CPU_SP_WRAP` (0xFFFF0000 for a 16-bit SS, 0 for a big one), set by
+`x86_pmode_load_seg` with SS and reset to 16-bit when PE drops. ITCM paid for
+it by moving the 2 KB font out (one pager frame, 158 -> 157). test_pmode
+arm 164-167, seen to FAIL with the UXTH.
+
+After it: no fault. The game's own 32-bit code runs (`CS=0x148`, flat), and
+the next stop is inside the Watcom heap: a free-list walk at
+`0x91335F..0x913376` that does not come back to its head, i.e. a corrupted
+heap. Not chased yet.
 
 **Earlier suspects, in order (the first two now look less likely):**
 - `MOV SS`/`POP SS` do NOT inhibit interrupts (a known semantic gap, STATUS.md).

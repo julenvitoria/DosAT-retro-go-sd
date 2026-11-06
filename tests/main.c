@@ -574,6 +574,7 @@ int load_mz_executable(FIL *file) {
     
     // Initialize CPU state
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     
     // Set segments (ES=0, CS=1, SS=2, DS=3, FS=4, GS=5)
     cpu_state_dtcm.segs[1].sel = mz.cs + load_segment;
@@ -656,6 +657,7 @@ static const uint8_t kbd_guest_code_c[] = {
 static void kbd_test_reset_cpu(uint32_t eip)
 {
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFF;   /* real mode, CS.D clear */
     cpu_state_dtcm.eip = eip;
@@ -3291,6 +3293,8 @@ static void nor_test_run(void)
     memcpy(test_ram, prog, sizeof(prog));
 
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -3508,6 +3512,7 @@ static uint32_t pm_run_lim(const uint8_t *prog, uint32_t len,
 {
     memcpy(test_ram, prog, len);
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFu;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -3960,6 +3965,7 @@ static void pmode_test_run(void)
             };
             memcpy(test_ram, prog2, sizeof(prog2));
             memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+            cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
             for (int i = 0; i < 6; i++)
                 cpu_state_dtcm.segs[i].limit = 0xFFFFu;
             cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -4600,6 +4606,37 @@ static void pmode_test_run(void)
        through read_desc_raw for exactly that reason -- so this counter
        reads the LTR arms' three refusals and nothing else. */
     pmode_r[163] = x86_pmode_faults;                        /* 2         */
+
+    /* ---- 16-bit code on a BIG (B=1) stack ------------------------------
+       The stack address size is SS's, not the code's. DOS/16M's 16-bit kernel
+       pops an interrupted frame off a DOS/4GW program's flat stack; a 16-bit
+       push/pop that wrapped SP threw ESP's top half away and read below 64 KB.
+       Runs last: it rewrites GDT 0x78 after every arm above has used it.
+         PM_ENTER
+         B8 78 00            MOV AX,0x78        big flat data, B=1
+         8E D0               MOV SS,AX
+         66 BC 00 20 01 00   MOV ESP,0x12000
+         68 34 12            PUSH 0x1234
+         68 78 56            PUSH 0x5678
+         5B                  POP BX
+         59                  POP CX
+         F4                  HLT                                          */
+    {
+        static const uint8_t big[] = {
+            PM_ENTER,
+            0xB8, 0x78, 0x00, 0x8E, 0xD0,
+            0x66, 0xBC, 0x00, 0x20, 0x01, 0x00,
+            0x68, 0x34, 0x12, 0x68, 0x78, 0x56,
+            0x5B, 0x59, 0xF4,
+        };
+        pm_desc(PM_GDT + 0x78, 0x00000, 0xFFFFF, 0x92, 0xC0);
+        test_ram[0x11FFC] = test_ram[0x11FFD] = 0;
+        pmode_r[164] = pm_run_int(big, sizeof(big));        /* 6 = HLT   */
+        pmode_r[165] = cpu_state_dtcm.regs[4];              /* 0x12000   */
+        pmode_r[166] = (cpu_state_dtcm.regs[3] & 0xFFFFu)
+                     | (cpu_state_dtcm.regs[1] << 16);      /* 0x12345678 */
+        pmode_r[167] = test_ram[0x11FFC] | (test_ram[0x11FFD] << 8); /* 0x5678 */
+    }
 }
 
 static void a20_test_run(void)
@@ -4662,6 +4699,7 @@ static void a20_test_run(void)
     };
     memcpy(test_ram, prog_wrap, sizeof(prog_wrap));
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -4695,6 +4733,7 @@ static void a20_test_run(void)
     };
     memcpy(test_ram, prog_open, sizeof(prog_open));
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -5132,6 +5171,7 @@ static void pager_test_run(void)
     };
     memcpy(test_ram, prog_one, sizeof(prog_one));
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -5183,6 +5223,7 @@ static void pager_test_run(void)
     };
     memcpy(test_ram, prog_full, sizeof(prog_full));
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -5224,6 +5265,7 @@ static void pager_test_run(void)
     };
     memcpy(test_ram, prog_back, sizeof(prog_back));
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -5511,6 +5553,7 @@ static uint32_t hma_run(const uint8_t *prog, uint32_t len)
 {
     memcpy(test_ram, prog, len);
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -6561,6 +6604,7 @@ static void seam_test_run(void)
     };
     memcpy(test_ram, prog, sizeof(prog));
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++)
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
     cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -6631,6 +6675,7 @@ static void seam_test_run(void)
         };
         memcpy(test_ram, sprog, sizeof(sprog));
         memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+        cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
         for (int i = 0; i < 6; i++)
             cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
         cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -6680,6 +6725,7 @@ static void seam_test_run(void)
         };
         memcpy(test_ram, pprog, sizeof(pprog));
         memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+        cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
         for (int i = 0; i < 6; i++)
             cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
         cpu_state_dtcm.pit_reload = 0xFFFFFFFF;
@@ -6725,6 +6771,7 @@ static void seam_test_run(void)
         memcpy(test_ram, fprog, sizeof(fprog));
         test_ram[0x100] = 0xF4;                 /* the far return's target */
         memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+        cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
         for (int i = 0; i < 6; i++)
             cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
         cpu_state_dtcm.pit_reload = 200000;
@@ -6873,6 +6920,8 @@ static void code_seam_test_run(void)
                       != guest_page_table[SEAM_FIRST + 1]);
 
     memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+
+    cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++) {
         cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
         cpu_state_dtcm.segs[i].sel   = SEAM_SEG;
@@ -7664,6 +7713,7 @@ void Reset_Handler(void) {
         if (run_benchmark_flag == 1) {
             // Setup benchmark state
             memset(&cpu_state_dtcm, 0, sizeof(cpu_state_dtcm));
+            cpu_state_dtcm.sp_wrap = X86_SP_WRAP_16;
             for (int i = 0; i < 6; i++) {
                 cpu_state_dtcm.segs[i].limit = 0xFFFFFFFF;
             }

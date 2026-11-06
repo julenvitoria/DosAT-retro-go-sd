@@ -240,8 +240,13 @@ struct X86CPUState {
        it no matter how deep in a handler's subroutine it was taken. See
        .save_state_and_exit in cpu_exec.S. */
     uint32_t host_sp;
+    /* What a 16-bit-code push/pop clears from ESP: 0xFFFF0000 for a 16-bit
+       stack, 0 for a BIG (B=1) one. The stack address size is SS's, not the
+       code's. Must be 0xFFFF0000 after every reset -- x86_cpu_reset_sp(). */
+    uint32_t sp_wrap;
 };
 typedef struct X86CPUState X86CPUState;
+#define X86_SP_WRAP_16 0xFFFF0000u
 
 /* Why x86_cpu_interp_asm returned. Emitted into x86_offsets.inc by offset.c so
    the assembly and the C/Python consumers cannot disagree. */
