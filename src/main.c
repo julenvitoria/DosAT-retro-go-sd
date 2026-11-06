@@ -4706,6 +4706,9 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
         X86_ZONE_ENTER(X86_ZONE_INPUT);             /* ZONES */
         poll_input(abi);
         x86_mouse_events();
+        /* A display start whose high byte came alone last frame (CRTC 0x0C
+           with no 0x0D) is complete now: present it. */
+        x86_vga_planar_start_flush();
         X86_ZONE_EXIT();                            /* ZONES */
 
         /*

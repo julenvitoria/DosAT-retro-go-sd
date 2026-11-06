@@ -1946,10 +1946,30 @@ void x86_vga_planar_gc_write(unsigned idx, uint8_t val)
  * The display start has been reprogrammed. Two consequences, and they are
  * separate: the stride learning, and the present edge.
  */
+static uint8_t start_hi_pending;
+
+/* CRTC 0x0C written: a start whose low byte may still be on its way. A
+   second 0x0C with no 0x0D between them settles the first; a title that
+   only ever writes the high byte (Wolf3D's pages are 0x4100 apart, low byte
+   0) is settled at the top of the next frame by x86_vga_planar_start_flush. */
+void x86_vga_planar_start_hi(void)
+{
+    if (start_hi_pending)
+        x86_vga_planar_start_write();
+    start_hi_pending = 1;
+}
+
+void x86_vga_planar_start_flush(void)
+{
+    if (start_hi_pending)
+        x86_vga_planar_start_write();
+}
+
 void x86_vga_planar_start_write(void)
 {
     uint32_t s, d;
 
+    start_hi_pending = 0;
     if (!x86_vga_modey_armed)
         return;
     s = x86_vga_crtc_start();
