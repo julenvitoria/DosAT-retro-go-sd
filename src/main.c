@@ -4095,6 +4095,64 @@ static int frame_owes_paint(void)
 #endif
 }
 
+/*
+ * BUTTONS BETWEEN FRAMES.
+ *
+ * poll_input() runs once per frame, and a frame of a heavy title is long --
+ * up to GUEST_SLICE_WALL_MS of guest work before anything is drawn. A tap
+ * shorter than that was never seen at all, and a press waited for the next
+ * frame: Epic Pinball's flippers "react late, and sometimes not at all".
+ * So the guest's runs also look at the buttons, every few ms. Only the game
+ * keys: GAME (bit 6, the on-screen keyboard's door) and PAUSE/the menu stay
+ * with poll_input(), and nothing is read while the OSK or the pad-mouse owns
+ * the buttons. The codes go through the same table and the same controller
+ * queue, and the frame's own poll then sees nothing changed.
+ */
+#ifndef PAD_MID_POLL_MS
+#define PAD_MID_POLL_MS 4u
+#endif
+volatile uint32_t input_mid_polls = 0;
+volatile uint32_t input_mid_edges = 0;
+
+static void poll_buttons_mid(const gw_firmware_abi_t *abi)
+{
+    static uint32_t last_ms;
+    uint32_t now = abi->HAL_GetTick();
+    odroid_gamepad_state_t pad;
+
+    if ((uint32_t)(now - last_ms) < PAD_MID_POLL_MS)
+        return;
+    last_ms = now;
+    if (x86_osk_visible() || x86_pad_mouse_on)
+        return;
+    memset(&pad, 0, sizeof(pad));
+    abi->odroid_input_read_gamepad(&pad);
+    input_mid_polls++;
+
+    uint32_t keys = 0;
+    if (pad.values[ODROID_INPUT_UP])     keys |= 1u << 0;
+    if (pad.values[ODROID_INPUT_DOWN])   keys |= 1u << 1;
+    if (pad.values[ODROID_INPUT_LEFT])   keys |= 1u << 2;
+    if (pad.values[ODROID_INPUT_RIGHT])  keys |= 1u << 3;
+    if (pad.values[ODROID_INPUT_A])      keys |= 1u << 4;
+    if (pad.values[ODROID_INPUT_B])      keys |= 1u << 5;
+    if (pad.values[ODROID_INPUT_SELECT]) keys |= 1u << 7;
+    if (pad.values[ODROID_INPUT_X])      keys |= 1u << 8;
+    if (pad.values[ODROID_INPUT_Y])      keys |= 1u << 9;
+
+    const uint32_t mask = 0x3FFu & ~(1u << 6);
+    uint32_t prev = x86_io.input_keys;
+    uint32_t changed = (keys ^ prev) & mask;
+    if (!changed)
+        return;
+    x86_io.input_keys = (prev & ~mask) | (keys & mask);
+    for (unsigned i = 0; i < 10; i++)
+        if (changed & (1u << i)) {
+            x86_pad_button(i, (keys & (1u << i)) != 0, pad_emit);
+            input_mid_edges++;
+        }
+}
+
 static void poll_input(const gw_firmware_abi_t *abi)
 {
     odroid_gamepad_state_t pad;
@@ -4978,6 +5036,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
              */
             /* The audio half the DMA just freed, if it freed one. */
             audio_pump(abi, 0);
+            poll_buttons_mid(abi);
             {
                 int got = x86_kbd_raise_irq(cpu_state_ptr);
                 input_irqs += (uint32_t)got;
