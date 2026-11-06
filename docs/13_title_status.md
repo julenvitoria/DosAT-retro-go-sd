@@ -519,6 +519,29 @@ DOS/16M's own high ones (`0x3D18` code at `0x81E270`, `0x3D28` data at
 `3D18:28D7` reads a byte at `[[3D28:0938]:002F]` and compares it with 2,
 which looks like a machine/switch-mode choice worth reading first.
 
+**FOUND AND FIXED, 2026-11-06: `REP` followed by another prefix ran ONCE.**
+With a different toolchain the fault stopped being deterministic again (four
+sites in four runs: `3D18:2986` err `0x100`, `0080:06CF` errs `0x56DC`,
+`0x944`, `0x1480`), so a temporary ring of every protected-mode segment load
+(linear EIP, selector, caller) plus a 256-entry EIP ring frozen at the fault
+was used instead of guessing. Every variant ended the same way: DOS/16M's
+interrupt-reflection return (`0080:068A..06CF`) rebuilds the interrupted
+register frame on the caller's stack with `67 F3 66 A5` (`rep a32 movsd`,
+fourteen dwords), switches to it and pops DS, ES, FS, GS. ES and DS were
+right, FS was usually 0 and GS garbage -- the frame had ONE dword in it.
+`L(REP_ENTER)` peeked only the byte after `F3`, saw `66`, took "not a string
+op" and dropped the REP. Same for `F3 67 A4` and `F3 26 A4`. The fix skips up
+to four prefixes when peeking, and takes the count width and handler variant
+from the mode record as those prefixes leave it; `ECX=0` now skips the
+prefixes too. `tests/test_opcodes.py` has five cases for it. After it, Dark
+Forces gets past the reflection and prints the DOS/4GW banner, with no fault
+in 53 s of tier 2. The 3D18 variants were the same bug: the `pop ds` there
+read a word of a frame that had never been copied.
+
+Still open from this: a REP rewound at a slice end or an IRQ restarts at the
+`F3`, so a prefix BEFORE it (`67 F3 66 A5`) is lost on the restart. Harmless
+while ESI/EDI/ECX fit in 16 bits; wrong for a big (32-bit) stack.
+
 **Earlier suspects, in order (the first two now look less likely):**
 - `MOV SS`/`POP SS` do NOT inhibit interrupts (a known semantic gap, STATUS.md).
   An IRQ between `MOV SS` and `MOV (E)SP` pushes onto a mixed stack, and DOS/16M

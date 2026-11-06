@@ -4095,9 +4095,39 @@ OP_AGNOSTIC .op_repne_F2
 OP_AGNOSTIC .op_rep_F3
     MOV.W R4, #1                   @ REP/REPE: stop once ZF becomes 0
 L(REP_ENTER):
-    /* Peek at the string opcode without consuming it. */
+    /* Peek at the string opcode without consuming it -- PAST any prefixes that
+       follow the REP. `F3 66 A5` is REP MOVSD in a 16-bit segment, and
+       `F3 26 A4` / `F3 67 A5` are as common: the REP belongs to the whole
+       instruction, not to the byte right after it. Peeking only that byte saw
+       a prefix, took "not a string op" and dropped the REP, so the copy ran
+       ONCE. DOS/16M's interrupt-reflection return copies the interrupted
+       register frame with `67 F3 66 A5` -- one dword of fourteen arrived, and
+       the POP GS after it loaded garbage (Dark Forces, docs/13).
+       R1 (no ModRM here) carries the mode record as those prefixes will leave
+       it, because the count width and the handler variant are the ones AFTER
+       the prefixes. At most four are skipped: CODE_PTR is proven for sixteen
+       bytes past the dispatched byte, and nothing real stacks more. */
     CODE_PTR R3
-    LDRB R0, [R3, #0]
+    MOV R1, R2
+    MOV.W R5, #5
+1:  LDRB R0, [R3], #1
+    SUBS R5, R5, #1
+    BEQ.W .fetch_next_byte_no_reset   @ prefix soup: leave the REP to the decoder
+    CMP R0, #0x66
+    IT EQ
+    EOREQ R1, R1, #OPSIZE_XOR
+    BEQ.N 1b
+    CMP R0, #0x67
+    IT EQ
+    EOREQ R1, R1, #ADDRSIZE_XOR
+    BEQ.N 1b
+    AND.W R12, R0, #0xE7
+    CMP R12, #0x26                 @ 26 2E 36 3E: ES CS SS DS overrides
+    BEQ.N 1b
+    AND.W R12, R0, #0xFE
+    CMP R12, #0x64                 @ 64 65: FS GS overrides
+    BEQ.N 1b
+    RSB.W R12, R5, #5              @ bytes after the REP, opcode included
 
     /* Only string opcodes repeat; on anything else the prefix is ignored,
        which is what the hardware does. 6C..6F are INS/OUTS, A4..A7 are
@@ -4127,11 +4157,11 @@ L(REP_STRING):
     MOVLO R4, #2                   @ A4/A5: MOVS, no ZF test
 L(REP_COUNT):
     LDR.W R5, [R8, #REG_ECX]
-    TST.W R2, #ADDRSIZE_XOR
+    TST.W R1, #ADDRSIZE_XOR
     IT EQ
     UXTHEQ R5, R5
     CBNZ R5, L(REP_ONE)
-    ADD.W R10, R10, #1             @ count 0: skip the string opcode entirely
+    ADD.W R10, R10, R12            @ count 0: skip the prefixes and the opcode
     B.W .fetch_decode_loop
 
 L(REP_ONE):
@@ -4139,7 +4169,7 @@ L(REP_ONE):
     /* CX at address size 16, and ECX[31:16] is NOT part of the count -- a
        full 32-bit store here zeroed it. CNT_STORE's ITE, merged into the
        truncation's own TST. */
-    TST.W R2, #ADDRSIZE_XOR
+    TST.W R1, #ADDRSIZE_XOR
     ITTE EQ
     UXTHEQ R5, R5
     STRHEQ.W R5, [R8, #REG_ECX]
@@ -4150,7 +4180,7 @@ L(REP_ONE):
     /* The batch re-entry point, taken from the LIVE dispatch table with the
        opcode still in R0, so it is by construction the same handler the fetch
        below is about to reach -- including the right operand-size variant. */
-    LDR.W R12, [R2, R0, LSL #2]
+    LDR.W R12, [R1, R0, LSL #2]
     STR.W R12, [R8, #CPU_REP_HANDLER]
     MOV.W R12, #REP_BATCH_MAX
     STR.W R12, [R8, #CPU_REP_BATCH]
