@@ -1057,6 +1057,7 @@ static bool dtcm_state_init(void)
 static void run_benchmark(void)
 {
     memset(cpu_state_ptr, 0, sizeof(X86CPUState));
+    cpu_state_ptr->sp_wrap = X86_SP_WRAP_16;
     for (int i = 0; i < 6; i++) {
         cpu_state_ptr->segs[i].limit = 0xFFFFFFFF;
     }
@@ -1996,6 +1997,18 @@ static int pgf_open_file(void)
  * position on entry belongs to whoever ran last. It is also what C requires
  * between a read and a write on the same update-mode stream.
  */
+/* A LOCKED XMS BLOCK'S ALIAS PAGES (8..16 MB) PAGE TO THE XMS STORE ITSELF.
+   Their offset from 8 MB is their byte offset in the store (XMS_LINEAR_BASE ==
+   XMS_FILE_BASE), which is what makes the alias coherent with AH=0Bh moves.
+   The slot ring (x86_pgfile) maps only the low 8 MB and the EMS window, so
+   these used to come back "unpageable": the writeback failed, the frame was
+   reused anyway, and the page refilled as ZEROES. DOS/4GW keeps its GDT/LDT
+   in such a block -- Dark Forces lost descriptors to it and took #GP on a
+   zero descriptor (445 x86_pgf_unpageable in one run, 2026-11-05). */
+#define XMS_ALIAS_FIRST_PAGE ((8u * 1024u * 1024u) / X86_PG_SIZE)  /* == XMS_FILE_BASE / 4 KB */
+static int xms_read(uint32_t off, void *dst, uint32_t bytes);
+static int xms_write(uint32_t off, const void *src, uint32_t bytes);
+
 static int pgf_write(uint32_t page, const void *src)
 {
     const gw_firmware_abi_t *abi = gw_firmware_abi();
@@ -2004,6 +2017,9 @@ static int pgf_write(uint32_t page, const void *src)
 
     if (!f)
         return -1;
+    if (page >= XMS_ALIAS_FIRST_PAGE)
+        return xms_write((page - XMS_ALIAS_FIRST_PAGE) * X86_PG_SIZE, src,
+                         X86_PG_SIZE);
     uint32_t slot = x86_pgf_slot_claim(page);
     if (slot == X86_PGF_NO_SLOT) { pgf_errors++; return -1; }
 
@@ -2042,6 +2058,9 @@ static int pgf_read(uint32_t page, void *dst)
 
     if (!f)
         return -1;
+    if (page >= XMS_ALIAS_FIRST_PAGE)
+        return xms_read((page - XMS_ALIAS_FIRST_PAGE) * X86_PG_SIZE, dst,
+                        X86_PG_SIZE);
     uint32_t slot = x86_pgf_slot_of(page);
     if (slot == X86_PGF_NO_SLOT) {
         /* FILE tier with no slot. The pager only sets FILE tier after a write
@@ -2559,6 +2578,7 @@ int x86_osk_disk_insert(int i)
 static void guest_reset(void)
 {
     memset(cpu_state_ptr, 0, sizeof(X86CPUState));
+    cpu_state_ptr->sp_wrap = X86_SP_WRAP_16;
     /* A reset machine's system timer is at its boot divisor again. Leaving a
        previous guest's 140 Hz in place would run the next one's clock 7.7x
        fast, which is the same defect in the opposite direction. */
@@ -4005,6 +4025,50 @@ static void dma2d_selftest(void)
 static void dma2d_sync(void) { }
 #endif
 
+/*
+ * RETRO-GO'S HUD ON A MODE Y SCREEN (owner, 2026-11-06: "in Epic Pinball the
+ * volume and brightness bars do not show"). The firmware draws the bars into
+ * the ACTIVE buffer only, and a Mode Y title paints BOTH buffers itself, on
+ * its own flips -- so the HUD was simply never drawn there. While it is up it
+ * is now drawn after each paint into the active buffer and its corner copied
+ * to the other one (the panel shows either); 60 x 140 bytes, not the frame,
+ * because the framebuffers are uncached and a full read-back costs
+ * milliseconds. When it goes, one more call lets the firmware give back the
+ * CLUT slots it borrowed, and a repaint wipes the bars.
+ */
+#define HUD_COPY_X 260u
+#define HUD_COPY_W (FRAME_W - HUD_COPY_X)
+#define HUD_COPY_H 142u
+static uint8_t modey_hud_was;
+
+static void modey_hud_draw(const gw_firmware_abi_t *abi)
+{
+    uint8_t *a = (uint8_t *)abi->lcd_get_active_buffer();
+    uint8_t *b = (uint8_t *)abi->lcd_get_inactive_buffer();
+    abi->common_ingame_overlay();
+    if (!a || !b)
+        return;
+    for (unsigned y = 0; y < HUD_COPY_H; y++)
+        memcpy(b + y * FRAME_W + HUD_COPY_X, a + y * FRAME_W + HUD_COPY_X,
+               HUD_COPY_W);
+}
+
+static void modey_paint_both(const gw_firmware_abi_t *abi);
+
+/* Once a frame while the screen is unchained, painted or not. */
+static void modey_hud_frame(const gw_firmware_abi_t *abi)
+{
+    int vis = common_emu_state.overlay != 0;
+    if (vis && !modey_hud_was)
+        modey_hud_draw(abi);           /* raised between two paints */
+    else if (!vis && modey_hud_was) {
+        abi->common_ingame_overlay();  /* releases the HUD's CLUT slots */
+        modey_hud_was = 0;
+        modey_paint_both(abi);         /* and wipes the bars */
+    }
+    modey_hud_was = (uint8_t)vis;
+}
+
 static void modey_paint_both(const gw_firmware_abi_t *abi)
 {
     /* VPROF: the PARENT bracket. x86_video_render() and x86_osk_draw() carry
@@ -4027,7 +4091,29 @@ static void modey_paint_both(const gw_firmware_abi_t *abi)
             X86_VPROF_END(ok, osk);
         }
     }
+    if (common_emu_state.overlay)
+        modey_hud_draw(abi);
     X86_VPROF_END(pt, paint);
+}
+
+/* The title's `[video] vga_pages`, or the build's default when the .cfg does
+   not name it. See X86_SET_VGA_PAGES in x86_settings.h. */
+int x86_video_modey_layout_flat(void)
+{
+    return x86_settings_base_is_set(X86_SET_VGA_PAGES)
+        && x86_settings_get(X86_SET_VGA_PAGES) == 3;
+}
+
+int x86_video_modey_pages_pinned(void)
+{
+    return x86_settings_base_is_set(X86_SET_VGA_PAGES);
+}
+
+unsigned x86_video_modey_extra_pages(void)
+{
+    if (x86_settings_base_is_set(X86_SET_VGA_PAGES))
+        return (unsigned)x86_settings_get(X86_SET_VGA_PAGES);
+    return X86_MODEY_EXTRA_PAGES;
 }
 
 void x86_video_page_flip(void)
@@ -4053,6 +4139,64 @@ static int frame_owes_paint(void)
 #else
     return 1;
 #endif
+}
+
+/*
+ * BUTTONS BETWEEN FRAMES.
+ *
+ * poll_input() runs once per frame, and a frame of a heavy title is long --
+ * up to GUEST_SLICE_WALL_MS of guest work before anything is drawn. A tap
+ * shorter than that was never seen at all, and a press waited for the next
+ * frame: Epic Pinball's flippers "react late, and sometimes not at all".
+ * So the guest's runs also look at the buttons, every few ms. Only the game
+ * keys: GAME (bit 6, the on-screen keyboard's door) and PAUSE/the menu stay
+ * with poll_input(), and nothing is read while the OSK or the pad-mouse owns
+ * the buttons. The codes go through the same table and the same controller
+ * queue, and the frame's own poll then sees nothing changed.
+ */
+#ifndef PAD_MID_POLL_MS
+#define PAD_MID_POLL_MS 4u
+#endif
+volatile uint32_t input_mid_polls = 0;
+volatile uint32_t input_mid_edges = 0;
+
+static void poll_buttons_mid(const gw_firmware_abi_t *abi)
+{
+    static uint32_t last_ms;
+    uint32_t now = abi->HAL_GetTick();
+    odroid_gamepad_state_t pad;
+
+    if ((uint32_t)(now - last_ms) < PAD_MID_POLL_MS)
+        return;
+    last_ms = now;
+    if (x86_osk_visible() || x86_pad_mouse_on)
+        return;
+    memset(&pad, 0, sizeof(pad));
+    abi->odroid_input_read_gamepad(&pad);
+    input_mid_polls++;
+
+    uint32_t keys = 0;
+    if (pad.values[ODROID_INPUT_UP])     keys |= 1u << 0;
+    if (pad.values[ODROID_INPUT_DOWN])   keys |= 1u << 1;
+    if (pad.values[ODROID_INPUT_LEFT])   keys |= 1u << 2;
+    if (pad.values[ODROID_INPUT_RIGHT])  keys |= 1u << 3;
+    if (pad.values[ODROID_INPUT_A])      keys |= 1u << 4;
+    if (pad.values[ODROID_INPUT_B])      keys |= 1u << 5;
+    if (pad.values[ODROID_INPUT_SELECT]) keys |= 1u << 7;
+    if (pad.values[ODROID_INPUT_X])      keys |= 1u << 8;
+    if (pad.values[ODROID_INPUT_Y])      keys |= 1u << 9;
+
+    const uint32_t mask = 0x3FFu & ~(1u << 6);
+    uint32_t prev = x86_io.input_keys;
+    uint32_t changed = (keys ^ prev) & mask;
+    if (!changed)
+        return;
+    x86_io.input_keys = (prev & ~mask) | (keys & mask);
+    for (unsigned i = 0; i < 10; i++)
+        if (changed & (1u << i)) {
+            x86_pad_button(i, (keys & (1u << i)) != 0, pad_emit);
+            input_mid_edges++;
+        }
 }
 
 static void poll_input(const gw_firmware_abi_t *abi)
@@ -4198,6 +4342,12 @@ static void arm_tick_irq(void)
         guest_tick_irq_lost++;
         return;
     }
+    /* NOT WHILE THE LAST ONE IS IN SERVICE. An 8259 holds a level off until
+       its EOI, and a handler that re-enables IF before it EOIs (DOS/16M does,
+       to reflect the tick to real mode) relies on exactly that. The tick stays
+       OWED and goes in at the next arm after the EOI (Dark Forces, docs/13). */
+    if (x86_pic_in_service(0))
+        return;
     cpu_state_ptr->hard_int_pending = 0x08;
     x86_pic_mark_in_service(0);
     x86_pit_counter_forced(1);       /* NOT a raw store: see x86_pit_sync() */
@@ -4602,6 +4752,9 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
         X86_ZONE_ENTER(X86_ZONE_INPUT);             /* ZONES */
         poll_input(abi);
         x86_mouse_events();
+        /* A display start whose high byte came alone last frame (CRTC 0x0C
+           with no 0x0D) is complete now: present it. */
+        x86_vga_planar_start_flush();
         X86_ZONE_EXIT();                            /* ZONES */
 
         /*
@@ -4932,6 +5085,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
              */
             /* The audio half the DMA just freed, if it freed one. */
             audio_pump(abi, 0);
+            poll_buttons_mid(abi);
             {
                 int got = x86_kbd_raise_irq(cpu_state_ptr);
                 input_irqs += (uint32_t)got;
@@ -5242,8 +5396,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        draws into the ACTIVE buffer, so it belongs right here,
                        after everything of ours and before the swap. The Mode
                        Y arm above paints BOTH buffers on its own schedule and
-                       does not get it: drawn into one of two buffers the bars
-                       would flicker at the panel rate. */
+                       draws it there (modey_hud_draw), into both. */
                     {
                         const uint32_t *pal = x86_video_clut256();
                         if (pal && vga_aperture && common_emu_state.overlay)
@@ -5252,6 +5405,8 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                     abi->common_ingame_overlay();
                 }
             }
+            if (x86_vga_is_unchained())
+                modey_hud_frame(abi);  /* the Mode Y arm's HUD: modey_hud_draw() */
             fb_sample = *(volatile uint32_t *)(fb + 20 * FRAME_W);
         }
         clut_sample = core_clut[1];

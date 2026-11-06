@@ -1896,6 +1896,89 @@ def run_test(args):
                 "regs_expected": {0: 0x1234, 1: 5},
                 "expected_eip": 5,
             },
+            # --- REP followed by more prefixes ----------------------------------
+            # The REP belongs to the whole instruction. Peeking only the byte
+            # after F3 saw the 66 and dropped the REP, so `rep movsd` in a
+            # 16-bit segment copied ONE dword. DOS/16M restores an interrupted
+            # register frame with `67 F3 66 A5`; one dword of fourteen arrived
+            # and Dark Forces died on the POP GS after it.
+            {
+                "name": "REP 66 MOVSD (16-bit) copies CX dwords",
+                # REP MOVSD ; HLT   CX=3, DS:SI=0x1000:0x10, ES:DI=0x2000:0x20
+                "code": bytes([0xF3, 0x66, 0xA5, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"DS": 0x1000, "ES": 0x2000},
+                "ram_setup": [(0x1010, bytes(range(1, 13)))],
+                "regs_initial": {1: 3, 6: 0x10, 7: 0x20},
+                "regs_expected": {1: 0, 6: 0x1C, 7: 0x2C},
+                "mem_expected": [(0x2020, bytes(range(1, 13)) + bytes([0]))],
+                "expected_eip": 4,
+            },
+            {
+                "name": "67 REP 66 MOVSD uses ECX/ESI/EDI",
+                # a32 REP MOVSD ; HLT  ECX=2, ESI=0x10, EDI=0x20, high halves 0
+                "code": bytes([0x67, 0xF3, 0x66, 0xA5, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"DS": 0x1000, "ES": 0x2000},
+                "ram_setup": [(0x1010, bytes(range(1, 9)))],
+                "regs_initial": {1: 2, 6: 0x10, 7: 0x20},
+                "regs_expected": {1: 0, 6: 0x18, 7: 0x28},
+                "mem_expected": [(0x2020, bytes(range(1, 9)) + bytes([0]))],
+                "expected_eip": 5,
+            },
+            {
+                "name": "REP 67 MOVSB counts with ECX, not CX",
+                # REP a32 MOVSB ; HLT  ECX=0x10000: CX alone is 0, which would
+                # skip the copy; ECX runs all 65536 bytes
+                "code": bytes([0xF3, 0x67, 0xA4, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"DS": 0x1000, "ES": 0x2000},
+                "ram_setup": [(0x1010, bytes([0xAA, 0xBB, 0xCC]))],
+                "regs_initial": {1: 0x00010000, 6: 0x10, 7: 0x20},
+                "regs_expected": {1: 0, 6: 0x10010, 7: 0x10020},
+                "mem_expected": [(0x2020, bytes([0xAA, 0xBB, 0xCC]))],
+                "expected_eip": 4,
+            },
+            {
+                "name": "REP ES: MOVSB takes the override after the REP",
+                # REP ES:MOVSB ; HLT  source is ES:SI, not DS:SI
+                "code": bytes([0xF3, 0x26, 0xA4, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"DS": 0x1000, "ES": 0x2000},
+                "ram_setup": [(0x2010, bytes([0x11, 0x22])), (0x1010, bytes([0x99, 0x99]))],
+                "regs_initial": {1: 2, 6: 0x10, 7: 0x20},
+                "regs_expected": {1: 0, 6: 0x12, 7: 0x22},
+                "mem_expected": [(0x2020, bytes([0x11, 0x22, 0x00]))],
+                "expected_eip": 4,
+            },
+            {
+                "name": "REP 66 MOVSD with CX=0 skips the prefix AND the opcode",
+                "code": bytes([0xF3, 0x66, 0xA5, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"DS": 0x1000, "ES": 0x2000},
+                "ram_setup": [(0x1010, bytes([0xDE, 0xAD, 0xBE, 0xEF]))],
+                "regs_initial": {1: 0, 6: 0x10, 7: 0x20},
+                "regs_expected": {1: 0, 6: 0x10, 7: 0x20},
+                "mem_expected": [(0x2020, bytes([0x00]))],
+                "expected_eip": 4,
+            },
+
+            {
+                "name": "67 REP 66 MOVSD survives the batch-cap rewind",
+                # a32 REP MOVSD ; HLT  300 dwords: the batch cap (256) rewinds
+                # the REP once, and the restart must keep the 67. ESI/EDI are
+                # above 64 KB, so a restart with 16-bit addressing copies the
+                # last 44 dwords from DS:SI to ES:DI instead.
+                "code": bytes([0x67, 0xF3, 0x66, 0xA5, 0xF4]),
+                "mode": 16,
+                # segs_initial sets the BASE: source 0x11010, dest 0x33020
+                "segs_initial": {"DS": 0x1000, "ES": 0x23000},
+                "ram_setup": [(0x11010, bytes([0x5A]) * 1200)],
+                "regs_initial": {1: 300, 6: 0x10010, 7: 0x10020},
+                "regs_expected": {1: 0, 6: 0x10010 + 1200, 7: 0x10020 + 1200},
+                "mem_expected": [(0x33020 + 1196, bytes([0x5A] * 4 + [0]))],
+                "expected_eip": 5,
+            },
 
             # --- REP: the batched fast path's boundaries ----------------------
             # .str_exit re-enters the string handler directly for up to

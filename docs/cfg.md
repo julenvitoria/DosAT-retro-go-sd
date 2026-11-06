@@ -97,6 +97,16 @@ Una tarjeta quitada no responde, como una ranura vacía, y el juego pasa a la
 siguiente que conozca (normalmente el altavoz del PC). Sirve para juegos que se
 cuelgan o suenan mal con una de ellas.
 
+### `[video]`
+
+| Clave | Valores | Qué hace |
+|---|---|---|
+| `vga_pages` | `0` a `3` | Memoria de vídeo extra para los juegos que usan el modo VGA «sin encadenar» (Mode X/Y). Sin la clave vale `1`, que va bien para casi todos. `2` le da tres pantallas completas (Wolfenstein 3D), a cambio de algo de memoria del juego. `3` es para los juegos que **desplazan la pantalla por toda la memoria de vídeo**, como **Epic Pinball**: sin ella la mesa sale doble, con rayas negras o en negro por abajo. |
+
+Si la pones, el núcleo no le quita esa memoria aunque el juego vaya justo de
+RAM: has elegido la imagen para ese juego. Si un juego carga más lento con
+ella, quítala.
+
 ### `[autoexec]`
 
 Qué programas se arrancan. No es un archivo `.bat` completo: el núcleo trae

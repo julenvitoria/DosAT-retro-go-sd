@@ -169,6 +169,22 @@ typedef enum {
     X86_SET_OPL = 5,
     X86_SET_SB  = 6,
 
+    /*
+     * `[video] vga_pages`: extra Mode Y display pages, each 64 KB. The default
+     * is the Makefile's X86_MODEY_EXTRA_PAGES (1), the rung that fits the free
+     * arena with no frames donated. 2 is Wolf3D's whole three-page layout, at
+     * the price of ~13 pager frames donated when the guest arms Mode Y. 3 is
+     * both pages laid out as ONE FLAT card (x86_vga_modey_set_flat): a title
+     * that scrolls the display start through all of VRAM -- Epic Pinball --
+     * needs that, because the page layout drops a 256-offset band every
+     * 16,640 and shows nothing above 0xC300. 0 keeps the single aliased page.
+     * Named in the .cfg, the pages are also kept when the pager is short
+     * (x86_video_policy_tick): the user chose the picture for that title.
+     * Per title, because the trade is: WOLF3D's level loads stall on the
+     * smaller pool.
+     */
+    X86_SET_VGA_PAGES = 7,
+
     X86_SET_COUNT
 } x86_setting_id_t;
 

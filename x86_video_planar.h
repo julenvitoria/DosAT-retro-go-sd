@@ -35,6 +35,11 @@
 unsigned       x86_vga_crtc_start(void);    /* display start, plane offsets   */
 unsigned       x86_vga_row_pitch(void);     /* 2 x CRTC Offset                */
 unsigned       x86_vga_pel_panning(void);   /* ATC index 0x13, low 3 bits     */
+/* Mode X geometry: rows on screen (200, or 240 when the CRTC is programmed
+   for 480 scanlines doubled) and the split-screen row (line compare), or
+   0xFFFF for none. Unchained 256-colour only. */
+unsigned       x86_vga_modex_rows(void);
+unsigned       x86_vga_split_row(void);
 const uint8_t *x86_vga_attr_palette(void);  /* ATC 0x00-0x0F, 16 entries      */
 uint8_t *x86_vga_attr_regs(void);           /* the same, writable (INT 10h)    */
 
@@ -54,6 +59,8 @@ void x86_vga_planar_gc_write(unsigned idx, uint8_t val);
 /* CRTC display start (index 0x0C/0x0D) has been reprogrammed. Feeds the Mode Y
    stride learning and, on a real change, the present-on-page-flip edge. */
 void x86_vga_planar_start_write(void);
+void x86_vga_planar_start_hi(void);     /* CRTC 0x0C: held for the low byte */
+void x86_vga_planar_start_flush(void);  /* frame top: settle a held 0x0C   */
 
 /* ---- arming -------------------------------------------------------------- */
 
@@ -131,6 +138,20 @@ int x86_vga_modey_row_at(uint32_t a, const uint8_t **base, uint32_t *off);
    known good. Weak in x86_video_planar.c so the tier-1 harness and any link
    with no LCD still resolve; the frame loop overrides it. */
 void x86_video_page_flip(void);
+/* Extra Mode Y pages to fund (0..2). Weak in x86_video.c (the build's
+   X86_MODEY_EXTRA_PAGES); src/main.c returns the title's [video] vga_pages. */
+unsigned x86_video_modey_extra_pages(void);
+/* 1 when the .cfg named it: the policy's shrink arm leaves those pages alone. */
+int x86_video_modey_pages_pinned(void);
+/* `[video] vga_pages = 3`: one flat 64 K-offset card (Epic Pinball's scroll)
+   instead of Wolf3D's three pages; needs both extra pages. */
+void x86_vga_modey_set_flat(int on);
+void x86_vga_modey_set_page3(void *p);
+/* The flat card's VRAM accesses, from x86_nor_slow_r/_w: 1 if handled. */
+int x86_vga_slow_access(uint32_t lin, int write);
+extern volatile uint32_t x86_vga_readfix;
+int x86_video_modey_layout_flat(void);
+extern volatile uint32_t x86_vga_modey_flat;
 
 /* ---- the presentation policy, and why it is HERE and not in the frame loop -
  *

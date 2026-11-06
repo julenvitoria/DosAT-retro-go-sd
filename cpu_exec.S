@@ -971,7 +971,7 @@ x86_cpu_interp_asm:
     .macro SP_INC reg
         ADD.W \reg, \reg, #4
     .endm
-    .macro SP_WRAP reg
+    .macro SP_WRAP reg, scratch
     .endm
 #define OP_SUFFIX _32
 .set PASS_16_BIT, 0
@@ -1057,8 +1057,18 @@ x86_cpu_interp_asm:
     .macro SP_INC reg
         ADD.W \reg, \reg, #2
     .endm
-    .macro SP_WRAP reg
-        UXTH \reg, \reg              @ SP wraps inside the 64K stack segment
+    /* SP wraps inside a 64K stack segment -- unless SS is a BIG (B=1) one, and
+       then the 16-bit code is still pushing and popping through all of ESP.
+       That is the stack ADDRESS size, which belongs to SS, not to the code:
+       DOS/16M's 16-bit kernel switches to a DOS/4GW program's flat 32-bit stack
+       (`mov ss,bx / mov esp,ebp`) and pops the interrupted frame off it. A UXTH
+       here threw ESP's top half away after the first pop, the second read
+       below 64 KB, and Dark Forces died on a POP ES of 0xCCCC. CPU_SP_WRAP is
+       0xFFFF0000 for a 16-bit stack and 0 for a big one; x86_pmode_load_seg
+       sets it with SS. */
+    .macro SP_WRAP reg, scratch
+        LDR.W \scratch, [R8, #CPU_SP_WRAP]
+        BIC.W \reg, \reg, \scratch
     .endm
 #define OP_SUFFIX _16
 #define USE_16_BIT

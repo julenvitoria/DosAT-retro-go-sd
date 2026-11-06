@@ -130,6 +130,13 @@ static const x86_cfg_key_t x86_cfg_keys[] = {
     { "oplmode",      "sblaster", X86_SET_OPL,      X86_CFG_T_NONE    },
     { "sbtype",       "sblaster", X86_SET_SB,       X86_CFG_T_NONE    },
 
+    /* ---- [video] -----------------------------------------------------------
+     *
+     * This core's own key: how many extra Mode Y pages to fund (0..2). DOSBox
+     * has nothing like it because its card always has 256 KB; here the card is
+     * built from whatever memory the guest can spare. See x86_settings.h. */
+    { "vga_pages",    "video",    X86_SET_VGA_PAGES, X86_CFG_T_INT     },
+
     /* ---- launch parameters, written out ------------------------------------
      *
      * The `[autoexec]` section below is the DOSBox way and is what most files
@@ -412,6 +419,12 @@ static int cfg_autoexec_command(const unsigned char *s, const unsigned char *e)
                                 (unsigned long)(e - tail));
 }
 
+/* Runs once, at load: cold code, out of RAM_EMU where the dos_core.ld routes
+   `.text.__uc.*` to RAM_UC (X86_UC_TEXT in x86_cpu.h, spelt out here because
+   this file stays free of the CPU headers). 1.4 KB back for the guest pool --
+   the 16 bytes the SB resampler cost on 2026-11-06 had moved the pool's
+   claim past a 4 KB boundary and lost a whole frame (157 -> 156). */
+__attribute__((section(".text.__uc.x86_cfg_parse"), noinline))
 x86_cfg_status_t x86_cfg_parse(const unsigned char *buf, unsigned long len,
                                x86_cfg_result_t *out)
 {
