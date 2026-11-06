@@ -240,8 +240,13 @@ struct X86CPUState {
        it no matter how deep in a handler's subroutine it was taken. See
        .save_state_and_exit in cpu_exec.S. */
     uint32_t host_sp;
+    /* What a 16-bit-code push/pop clears from ESP: 0xFFFF0000 for a 16-bit
+       stack, 0 for a BIG (B=1) one. The stack address size is SS's, not the
+       code's. Must be 0xFFFF0000 after every reset -- x86_cpu_reset_sp(). */
+    uint32_t sp_wrap;
 };
 typedef struct X86CPUState X86CPUState;
+#define X86_SP_WRAP_16 0xFFFF0000u
 
 /* Why x86_cpu_interp_asm returned. Emitted into x86_offsets.inc by offset.c so
    the assembly and the C/Python consumers cannot disagree. */
@@ -464,6 +469,7 @@ int x86_kbd_raise_irq(X86CPUState *cpu);
 void x86_kbd_latch_next(void);              /* host harness: load the next code */
 void x86_pic_mark_in_service(unsigned level);
 void x86_pic_eoi_level(unsigned level);      /* a BIOS HLE handler's own EOI */
+int  x86_pic_in_service(unsigned level);     /* 8259 ISR bit, for the tick arm */
 int x86_bios_kbd_irq(void);
 /* Scancode -> ASCII, the same decode INT 09h uses. Shared with the on-screen
    keyboard, whose echo line must show what the guest was actually sent. */
@@ -696,7 +702,7 @@ extern uint32_t x86_dos_file_calls;
 extern volatile uint32_t x86_io_log[];    /* X86_IO_LOG_SLOTS * 2, x86_io.c */
 extern volatile uint32_t x86_io_log_idx;
 extern volatile uint32_t x86_io_log_total;
-extern char x86_dos_path_log[2][20];
+extern char x86_dos_path_log[1][20];
 uint16_t *x86_hle_flags_on_stack(void);
 uint16_t dos_test_alloc(uint16_t paras, uint16_t *largest);
 uint16_t dos_test_free(uint16_t seg);

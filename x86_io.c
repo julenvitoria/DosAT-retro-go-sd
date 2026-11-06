@@ -371,6 +371,7 @@ static uint8_t pic_isr;
 
 void x86_pic_mark_in_service(unsigned level) { pic_isr |= (uint8_t)(1u << level); }
 void x86_pic_eoi_level(unsigned level)       { pic_isr &= (uint8_t)~(1u << level); }
+int  x86_pic_in_service(unsigned level)       { return (pic_isr >> level) & 1u; }
 
 static uint8_t sb_irq_pending_line(void);   /* the SB's line; see the sound block */
 static uint8_t pic_isr_bits(void);
@@ -542,6 +543,41 @@ unsigned x86_vga_row_pitch(void)
     return off ? off * 2u : 80u;
 }
 
+/*
+ * MODE X: 240 ROWS AND THE SPLIT SCREEN.
+ *
+ * A title that reprograms the vertical timing for 480 scanlines (Vertical
+ * Display End 0x1DF, bits 8/9 in Overflow 0x07) with every row scanned twice
+ * is showing 320x240, which is exactly this panel -- Epic Pinball does, and
+ * at 200 rows its bottom 40 were never shown. Anything else stays 200.
+ *
+ * Line Compare (0x18, bit 8 in 0x07 bit 4, bit 9 in 0x09 bit 6) is the
+ * split screen: from that scanline down the card restarts at offset 0. Epic
+ * keeps its dot-matrix score board there, under the scrolling table; without
+ * it the board was drawn into the table and the table scrolled through it.
+ */
+static unsigned vga_scan_per_row(void)
+{
+    unsigned s = (vga_regs.crtc[0x09] & 0x1Fu) + 1u;
+    return (vga_regs.crtc[0x09] & 0x80u) ? 2u * s : s;
+}
+
+unsigned x86_vga_modex_rows(void)
+{
+    unsigned ov = vga_regs.crtc[0x07];
+    unsigned vde = vga_regs.crtc[0x12] | ((ov >> 1) & 1u) << 8
+                 | ((ov >> 6) & 1u) << 9;
+    return ((vde + 1u) / vga_scan_per_row() == 240u) ? 240u : 200u;
+}
+
+unsigned x86_vga_split_row(void)
+{
+    unsigned lc = vga_regs.crtc[0x18] | ((vga_regs.crtc[0x07] >> 4) & 1u) << 8
+                | ((vga_regs.crtc[0x09] >> 6) & 1u) << 9;
+    unsigned row = (lc + 1u) / vga_scan_per_row();
+    return row < x86_vga_modex_rows() ? row : 0xFFFFu;
+}
+
 /* Attribute Controller index 0x13, low 3 bits: the horizontal pel pan, in
    pixels. A scrolling EGA title reprograms it every frame. */
 unsigned x86_vga_pel_panning(void) { return vga_regs.attr[0x13] & 7u; }
@@ -565,6 +601,14 @@ void x86_vga_crtc_preset(uint8_t mode)
     vga_regs.crtc[0x0C] = 0;
     vga_regs.crtc[0x0D] = 0;
     vga_regs.crtc[0x13] = (mode == 0x13) ? 0x28 : 0x14;
+    /* The vertical registers the Mode X geometry reads (x86_vga_modex_rows,
+       x86_vga_split_row), at a VGA BIOS's values: 400 scanlines, every row
+       twice (0Dh: 0xC0 doubles too), Line Compare 0x3FF = no split. Left at
+       0 they would read as a split at the top of the screen. */
+    vga_regs.crtc[0x07] = 0x1F;
+    vga_regs.crtc[0x09] = (mode == 0x13) ? 0x41 : 0xC0;
+    vga_regs.crtc[0x12] = 0x8F;
+    vga_regs.crtc[0x18] = 0xFF;
     /* Identity attribute palette. Pixel value n -> DAC entry n, which in a VGA
        DAC IS the sixteen EGA colours -- IBM's 00 01 02 03 04 05 14 07 38.. are
        indices into a 64-entry EGA DAC layout and would recolour every EGA-16
@@ -747,6 +791,114 @@ uint32_t x86_speaker_hz(void)
     return d == X86_SPK_CLICK ? 0 : x86_spkr_freq_hz(d);
 }
 
+/*
+ * THE DATA BIT AS A LEVEL, ON THE GUEST'S OWN CLOCK.
+ *
+ * With channel 2's gate off the cone follows port 0x61 bit 1 alone, and a
+ * title that plays SAMPLES through the speaker does exactly that: it toggles
+ * the bit thousands of times a second and the duty cycle is the waveform.
+ * Risky Woods plays all of its effects so (1,630 changes in its first second
+ * of play, 484 more than the event ring below could even hold). The ring is
+ * stamped in HOST milliseconds and its data-bit edges were drawn as fixed
+ * decaying clicks, eight a buffer at most -- the "distorted" effects, against
+ * a DOSBox recording of the same moment.
+ *
+ * So every change of the bit with the gate off is also kept here, stamped in
+ * PIT ticks (x86_pit_ticks, the clock the guest times its own toggles with),
+ * and the render integrates the level over each output sample: the box
+ * filter a cone does to a pulse train, which turns the duty cycle back into
+ * the sample. A short pulse is energy in proportion to its width rather than a
+ * standard click. 4 KB from the host allocator on the first edge, so a title
+ * that never does this pays nothing; without an allocator the clicks stay.
+ */
+#define SPK_LV_RING 1024u                /* power of two; ~70 ms at 16 kHz */
+volatile uint32_t x86_spk_lv_edges;      /* data-bit edges recorded (free-running) */
+volatile uint32_t x86_spk_lv_dropped;    /* recorded past a full ring */
+static uint32_t *spk_lv_buf;             /* (tick << 1) | level */
+static uint32_t  spk_lv_head, spk_lv_tail;
+static uint32_t  spk_lv_t0;              /* PIT tick the next render starts at */
+static uint8_t   spk_lv_level, spk_lv_render_level;
+
+static void spk_lv_put(uint8_t value)
+{
+    uint8_t lvl = (uint8_t)((value & 3u) == 2u);
+    if (lvl == spk_lv_level)
+        return;
+    spk_lv_level = lvl;
+    if (!spk_lv_buf) {
+        if (!x86_io_alloc)
+            return;
+        spk_lv_buf = (uint32_t *)x86_io_alloc(SPK_LV_RING * 4u);
+        if (!spk_lv_buf)
+            return;
+        spk_lv_t0 = x86_pit_ticks();
+    }
+    if (spk_lv_tail - spk_lv_head >= SPK_LV_RING) {
+        x86_spk_lv_dropped++;
+        return;
+    }
+    spk_lv_buf[spk_lv_tail++ & (SPK_LV_RING - 1u)] = (x86_pit_ticks() << 1) | lvl;
+    x86_spk_lv_edges++;
+}
+
+/* Integrate the data bit over this buffer's guest time and add it in. */
+static void spk_lv_render(int16_t *dst, unsigned frames, int16_t amplitude)
+{
+    uint32_t t0 = spk_lv_t0, t1 = x86_pit_ticks();
+    uint32_t span = t1 - t0;
+    uint32_t lvl = spk_lv_render_level;
+
+    spk_lv_t0 = t1;
+    if (!frames)
+        return;
+    if (span == 0u || span > 1193182u / 4u) {
+        /* No guest time, or a stall: no waveform to rebuild. Settle the
+           level and drop what was queued. */
+        while (spk_lv_head != spk_lv_tail)
+            lvl = spk_lv_buf[spk_lv_head++ & (SPK_LV_RING - 1u)] & 1u;
+        spk_lv_render_level = (uint8_t)lvl;
+        return;
+    }
+    if (spk_lv_head == spk_lv_tail && !lvl)
+        return;                          /* silent and nothing changed */
+
+    /* No division per sample: the boundaries step by a 16.16 increment and
+       the level is normalised by one reciprocal (span <= 298,295 ticks, so
+       the products fit in 64 bits). */
+    uint32_t step = (uint32_t)(((uint64_t)span << 16) / frames);
+    int32_t  gain = (int32_t)(((int64_t)amplitude << 16) / (int32_t)(step >> 16 ? step >> 16 : 1));
+    uint64_t pos = 0;
+    uint32_t b0 = 0;                     /* tick offset of this sample's start */
+    for (unsigned i = 0; i < frames; i++) {
+        pos += step;
+        uint32_t b1 = (i + 1u == frames) ? span : (uint32_t)(pos >> 16);
+        uint32_t acc = 0, at = b0;
+        while (spk_lv_head != spk_lv_tail) {
+            uint32_t e = spk_lv_buf[spk_lv_head & (SPK_LV_RING - 1u)];
+            uint32_t et = ((e >> 1) - t0) & 0x7FFFFFFFu; /* 31-bit stamps: wrap-safe */
+            if (et > span)
+                et = 0;                      /* stamped before t0: now */
+            if (et >= b1)
+                break;
+            if (et > at) {
+                if (lvl) acc += et - at;
+                at = et;
+            }
+            lvl = e & 1u;
+            spk_lv_head++;
+        }
+        if (lvl) acc += b1 - at;
+        if (acc && b1 > b0) {
+            int32_t v = (int32_t)(((int64_t)acc * gain) >> 16);
+            if (v > amplitude) v = amplitude;
+            int32_t o = dst[i] + v;
+            dst[i] = (int16_t)(o > 32767 ? 32767 : o < -32768 ? -32768 : o);
+        }
+        b0 = b1;
+    }
+    spk_lv_render_level = (uint8_t)lvl;
+}
+
 uint32_t (*x86_io_time_ms)(void);
 volatile uint32_t x86_spk_events = 0;
 volatile uint32_t x86_spk_events_dropped = 0;
@@ -858,7 +1010,7 @@ void x86_speaker_render(int16_t *dst, unsigned frames, unsigned sample_rate,
         spk_run(dst + pos, idx - pos, x86_io.spk_render_div,
                 sample_rate, amplitude);
         pos = idx;
-        if (div == X86_SPK_CLICK && nclick < 8u)
+        if (div == X86_SPK_CLICK && nclick < 8u && !spk_lv_buf)
             click_at[nclick++] = (uint16_t)idx;
         x86_io.spk_render_div = div;
     }
@@ -886,6 +1038,9 @@ void x86_speaker_render(int16_t *dst, unsigned frames, unsigned sample_rate,
         }
         x86_io.spk_click_lvl = (int16_t)lvl;
     }
+    /* The data bit with the gate off, as a level (spk_lv_render). */
+    if (spk_lv_buf)
+        spk_lv_render(dst, frames, amplitude);
 }
 
 /* ---------------------------------------------------------------------------
@@ -984,6 +1139,18 @@ int x86_kbd_raise_irq(X86CPUState *cpu)
         if (++kbd_isr_stuck < 400u)
             return 0;
         pic_isr &= (uint8_t)~0x02u;
+    }
+    /* NOT WHILE THE TIMER IS IN SERVICE EITHER. The 8259 is fully nested: IRQ 1
+       waits for IRQ 0's EOI. Delivered INSIDE a timer handler that had
+       re-enabled IF (Epic Pinball's does), the keyboard's handler then sent
+       the first EOI -- which, non-specific, cleared the TIMER's bit -- and
+       left IRQ 1 in service until the 400-try fallback above: a flipper
+       break code 2.5 s late, the "stays up" flipper (owner, 2026-11-06,
+       measured under gwemu: pic_isr 0x03 at the delivery). Same bound, so a
+       timer handler that never EOIs costs a stall and not a dead keyboard. */
+    if (pic_isr & 0x01u) {
+        if (++kbd_isr_stuck < 400u)
+            return 0;
     }
     if (cpu->hard_int_pending)
         return 0;
@@ -1442,6 +1609,7 @@ static struct {
 } sbp = { .dma8 = 1, .dma16 = 5 };
 
 static uint8_t sb_irq_line;       /* the DSP's interrupt output            */
+static uint16_t sb_isr_wait;      /* raises held off by a higher level in service */
 static uint8_t sb_wstat_reads;    /* 0x22C reads: drives the busy bit      */
 static uint8_t sb_irq_kind;       /* mixer 0x82: b0 = 8-bit, b1 = 16-bit   */
 
@@ -1474,6 +1642,17 @@ int x86_sb_raise_irq(X86CPUState *cpu)
         return 0;
     if (pic_isr & 0x20u)
         return 0;                     /* still in service: not acked yet    */
+    /* Fully nested, as for the keyboard: IRQ 5 waits for any of 0..4 in
+       service. Delivered inside a timer or keyboard handler, the SB handler's
+       non-specific EOI cleared THAT level and left 5 in service for good --
+       no SB interrupt ever again, so a driver that waits for the end of its
+       block never starts another (Prince of Persia: no more footsteps after
+       a collision, owner 2026-11-06). Bounded like the keyboard's. */
+    if (pic_isr & 0x1Fu) {
+        if (++sb_isr_wait < 2000u)
+            return 0;
+    }
+    sb_isr_wait = 0;
     if (pic_imr & 0x20u) {
         x86_sb_irqs_masked++;
         return 0;
@@ -1856,6 +2035,8 @@ static void sb_dac_render(int16_t *dst, unsigned frames, int16_t amplitude)
 #define SB_RING 2048u                   /* int16 samples; >= 2.5 x 800 */
 static int16_t *sb_ring;
 static uint32_t sb_ring_w, sb_ring_r;
+static int32_t  sb_prev;                /* the sample before sbp.last */
+static uint8_t  sb_prime;               /* next fetch starts a transfer: no ramp in */
 
 unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
                            int16_t amplitude)
@@ -1884,10 +2065,23 @@ unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
         while (sb_ring_w - sb_ring_r < want) {
             while (sbp.frac >= 0x10000u) {
                 sbp.frac -= 0x10000u;
+                sb_prev = sbp.last;
                 if (!sb_next_sample())
                     goto done;
+                if (sb_prime) {         /* a transfer's first sample: held,
+                                           not ramped in from the last one */
+                    sb_prev = sbp.last;
+                    sb_prime = 0;
+                }
             }
-            sb_ring[sb_ring_w++ & (SB_RING - 1u)] = sbp.last;
+            /* Linear, not a zero-order hold (2026-11-06): an 8 kHz effect
+               held for six output samples puts its images at 8 kHz +- f at
+               nearly full level -- the harsh, "distorted" Risky Woods
+               effects against a DOSBox recording. Between the previous and
+               the current sample at the accumulator's fraction: one sample
+               of latency, one multiply. */
+            sb_ring[sb_ring_w++ & (SB_RING - 1u)] = (int16_t)(sb_prev +
+                (((int32_t)sbp.last - sb_prev) * (int32_t)sbp.frac >> 16));
             n++;
             sbp.frac += step;
         }
@@ -1925,6 +2119,7 @@ static void sb_start_fmt(uint8_t bits16, uint8_t autoinit, uint8_t stereo,
                          uint8_t sign, uint8_t silent, uint32_t samples,
                          uint8_t adpcm_fmt, uint8_t ref)
 {
+    sb_prime = 1;
     /* The output ring is taken at the FIRST DMA transfer, not at the first
        refill: the AHB heap is small on the device, and taking it up front
        left the direct-DAC FIFO (sb_dac_put) nothing -- Another World, which
@@ -2820,6 +3015,7 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
         x86_io.port61 = (uint8_t)value;
         pit_ch2_gate(value & 1u);    /* bit 0 IS channel 2's gate */
         spk_event(port, value);
+        spk_lv_put((uint8_t)value);
         break;
     case 0x20:
         /* OCW3: bit 3 set with bit 4 clear selects which register the NEXT read
@@ -2835,8 +3031,28 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
         } else if (value & 0x20u) {
             if ((value & 0xF8u) == 0x60u)
                 pic_isr &= (uint8_t)~(1u << (value & 7u));   /* specific */
-            else
-                pic_isr &= (uint8_t)(pic_isr - 1u);  /* highest priority only */
+            else {
+                /* Highest priority only -- among the levels the CPU has
+                   actually TAKEN. A level is marked in service when it is
+                   ARMED into the one-deep slot, i.e. before the CPU accepts
+                   it; on the chip the bit is set at INTA. So a tick armed
+                   while a keyboard or SB handler runs with IF clear was
+                   "in service" before that handler's EOI, which then
+                   cleared the TIMER's bit and left its own set for good:
+                   no IRQ 5 ever again (Prince of Persia's footsteps gone
+                   after a collision; any later sound only once) and IRQ 1
+                   held for the 400-try fallback (Epic Pinball's flipper
+                   break 2.5 s late). Measured under gwemu, 2026-11-06:
+                   KBD armed isr=02, TMR armed isr=03, guest OUT 20h. */
+                uint8_t eff = pic_isr;
+                switch (cpu_state_ptr->hard_int_pending) {
+                case 0x08u: eff &= (uint8_t)~0x01u; break;
+                case 0x09u: eff &= (uint8_t)~0x02u; break;
+                case 0x0Du: eff &= (uint8_t)~0x20u; break;
+                default: break;
+                }
+                pic_isr &= (uint8_t)~(eff & (uint8_t)(0u - eff));
+            }
             x86_sb_eois++;
         }
         break;
@@ -2949,7 +3165,13 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
         vga_regs.crtc[idx] = (uint8_t)value;
         /* The display start pair is the only CRTC write with a side effect: it
            feeds the Mode Y page-stride learning and it is the present edge. */
-        if ((idx & 0x1Eu) == 0x0Cu)
+        /* The HIGH byte alone is half a display start: presenting on it
+           painted a frame at the wrong address, which the panel shows as a
+           band of shifted rows (Epic Pinball's table scroll). It is held
+           until the low byte, or the next frame, completes it. */
+        if (idx == 0x0Cu)
+            x86_vga_planar_start_hi();
+        else if (idx == 0x0Du)
             x86_vga_planar_start_write();
         break;
     }

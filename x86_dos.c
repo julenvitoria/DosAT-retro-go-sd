@@ -2221,7 +2221,7 @@ static void fail(uint16_t code) { x86_set_ax(code); x86_hle_set_cf(1); }
 X86_UC_BSS(x86_dos_file_log) uint32_t x86_dos_file_log[DOS_FILE_LOG_SLOTS * 4];
 uint32_t x86_dos_file_log_idx;
 uint32_t x86_dos_file_calls;
-char x86_dos_path_log[2][20];   /* 16 -> 8 (2026-10-17), -> 4 (2026-10-24), 32 -> 20 chars (2026-10-30), -> 2 (2026-11-04): RAM_EMU */
+char x86_dos_path_log[1][20];   /* 16 -> 8 (2026-10-17), -> 4 (2026-10-24), 32 -> 20 chars (2026-10-30), -> 2 (2026-11-04), -> 1 (2026-11-05): RAM_EMU */
 static uint32_t dos_path_log_idx;
 
 /* The MEMORY calls are traced too, but they are not FILE calls: they get a
@@ -2254,7 +2254,7 @@ static int dos_func_is_file(uint8_t f)
 
 static void dos_log_path(const char *p)
 {
-    unsigned slot = dos_path_log_idx & 1;
+    unsigned slot = 0;
     strncpy(x86_dos_path_log[slot], p, sizeof(x86_dos_path_log[0]) - 1);
     x86_dos_path_log[slot][sizeof(x86_dos_path_log[0]) - 1] = 0;
     dos_path_log_idx++;
@@ -2521,6 +2521,26 @@ static int dos_int21_dispatch(uint8_t func)
            Jugar", got AX=1 back as a PSP and went straight to its exit text. */
         x86_set_bx(psp_seg);
         return 1;
+
+    case 0x33: {                                /* Ctrl-Break flag, boot drive, true version */
+        /* DOS/4GW (Dark Forces) asks this while it starts; unanswered it got
+           CF=1 AX=1 back. AL=00 get / 01 set / 02 exchange the break flag (we
+           keep none: always "off"), 05 the boot drive (C: = 3), 06 the true
+           version: 5.00, revision 0, DOS not in the HMA. */
+        uint8_t al = (uint8_t)cpu_state_ptr->regs[0];
+        uint32_t *rd = &cpu_state_ptr->regs[2];          /* EDX */
+        if (al <= 2u)
+            *rd &= ~0xFFu;                               /* DL = 0 */
+        else if (al == 5u)
+            *rd = (*rd & ~0xFFu) | 3u;                   /* DL = C: */
+        else if (al == 6u) {
+            x86_set_bx(0x0005);
+            *rd &= ~0xFFFFu;
+        } else {
+            x86_set_ax(0x33FFu);                          /* AL=FF: bad subfunction */
+        }
+        return 1;
+    }
 
     case 0x30:                                  /* DOS version 5.00 */
         x86_set_ax(0x0005);

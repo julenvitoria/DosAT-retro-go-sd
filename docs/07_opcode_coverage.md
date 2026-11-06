@@ -364,7 +364,7 @@ Warning legend:
 | F0 | reached | `.op_lock_F0` | AGN | - | no flag macro reachable |
 | F1 | reached | `.op_int1_F1` | dual | - | - |
 | F2 | reached | `.op_repne_F2` | AGN | - | REVIEW: no width primitive, 1 bare word op(s), no flag macro reachable |
-| F3 | reached | `.op_rep_F3` | AGN | - | REVIEW: no width primitive, 8 bare word op(s), no flag macro reachable |
+| F3 | reached | `.op_rep_F3` | AGN | - | REVIEW: no width primitive, 9 bare word op(s), no flag macro reachable |
 | F4 | reached | `.op_hlt_F4` | AGN | - | REVIEW: no width primitive, 5 bare word op(s), no flag macro reachable |
 | F5 | reached | `.op_cmc_F5` | AGN | - | no flag macro reachable |
 | F6 | reached | `.op_grp3_eb_F6` | AGN | ARITH, LOGIC | REVIEW: AGN body mixes width primitives with 74 bare word op(s) |

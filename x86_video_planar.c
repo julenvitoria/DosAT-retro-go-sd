@@ -336,6 +336,7 @@ static uint32_t  modey_cache_offs;  /* plane offsets it holds                */
    NULL means that page is still ALIASED onto page 0 -- the old behaviour, and
    the defect this whole path exists to remove. */
 static uint8_t  *modey_pgstore[2];
+static uint8_t  *modey_page3;      /* the flat card's fourth 16 K chunk     */
 
 static uint32_t  modey_prev_start;
 static int       modey_learned;
@@ -536,6 +537,112 @@ void x86_vga_modey_set_pages(void *p1, void *p2)
     x86_vga_modey_pages = 1u + (modey_pgstore[0] != NULL)
                              + (modey_pgstore[1] != NULL);
     x86_vga_modey_alias_hits = 0;
+    x86_vga_modey_flat = 0;            /* a new set of pages is a new layout */
+    modey_page3 = NULL;                /* set after this, by its own call */
+}
+
+/*
+ * THE FLAT CARD (`[video] vga_pages = 3`).
+ *
+ * The page model above is Wolf3D's: three display pages 16,640 offsets apart,
+ * each stored in 16,384, and an off-screen cache above 0xC300. A title that
+ * SCROLLS through video memory instead -- Epic Pinball moves the display start
+ * down a table taller than the screen -- treats the 64 K plane offsets as one
+ * flat strip, and that model cuts it to pieces: every 16,640 offsets a band of
+ * 256 is thrown away (the thin black lines across the table), and everything
+ * past 0xC300 is "cache" the blit cannot show (the table went black when the
+ * ball dropped to the flippers).
+ *
+ * Flat is the plain map, chunk = a >> 14: the aperture, the two extra pages
+ * and the cache, in that order, 16,384 offsets each. Only the cache is short
+ * (X86_MODEY_CACHE_MAX), so the top 768 offsets of the card -- below the last
+ * row of a 256 KB card's worth of scrolling -- have no storage. It needs both
+ * extra pages; with fewer it is not turned on.
+ */
+volatile uint32_t x86_vga_modey_flat;
+
+void x86_vga_modey_set_page3(void *p)
+{
+    modey_page3 = (uint8_t *)p;
+    if (modey_page3)
+        memset(modey_page3, 0, 4u * X86_MODEY_PLANE);
+}
+
+static void fold_trap_set(int on);
+static uint8_t *vga_cell(uint32_t a);
+extern volatile uint32_t x86_vga_fold_trap_armed;
+
+void x86_vga_modey_set_flat(int on)
+{
+    x86_vga_modey_flat = (on && modey_pgstore[1]) ? 1u : 0u;
+    /* The flat card also READS right (below): re-install the aperture's fold
+       entries in whichever form that needs. */
+    if (x86_vga_fold_trap_armed)
+        fold_trap_set(1);
+}
+
+/*
+ * CPU READS OF THE FLAT CARD.
+ *
+ * A Mode Y data read of A000:a must return plane (Read Map Select) at offset a.
+ * The aperture trap cannot: it hands the site the aperture byte at a, which in
+ * the interleaved store is plane a&3 of offset a>>2 -- "the wrong plane, by
+ * design and for want of 64 KB" (vga_cell's header). Wolf3D never reads its
+ * screen; Epic Pinball does, to put back the table under the ball and under
+ * its dot-matrix messages, and every restore drew yellow lines and dots along
+ * the ball's path.
+ *
+ * So on the flat card the aperture's fold entries are a plain FOLD MISS, and
+ * every access reaches x86_nor_slow_r/_w, which hand it here. A read gets a
+ * pointer to eight STAGED bytes, plane rm of offsets a..a+7 (an access is at
+ * most four; eight is the slack a seam check could look at), and the latch is
+ * recorded as the trap would have. A write gets the plain aperture pointer, so
+ * the site's VGA_ST hook runs exactly as before. Slower -- a C call per VRAM
+ * access -- and only for the title whose .cfg asked for the flat card.
+ */
+volatile uint32_t x86_vga_readfix;
+volatile uint32_t x86_vga_readfix_reads;
+static uint8_t readfix_stage[8];
+
+int x86_vga_slow_access(uint32_t lin, int write)
+{
+    uint32_t a = lin - 0xA0000u;
+    uint8_t *ap = x86_vga_planar_aperture;
+
+    if (!x86_vga_readfix || a >= 0x10000u || !ap || !cpu_state_ptr)
+        return 0;
+    if (write) {
+        cpu_state_ptr->nor_ptr = (uint32_t)(uintptr_t)(ap + a);
+        return 1;
+    }
+    {
+        const uint32_t rm = gc[4] & 3u;
+        for (uint32_t i = 0; i < sizeof readfix_stage; i++) {
+            const uint8_t *c = vga_cell((a + i) & 0xFFFFu);
+            readfix_stage[i] = c ? c[rm] : 0u;
+        }
+    }
+    x86_vga_readfix_reads++;
+    cpu_state_ptr->vga_latch = (uint32_t)(uintptr_t)(ap + a);
+    cpu_state_ptr->nor_ptr = (uint32_t)(uintptr_t)readfix_stage;
+    return 1;
+}
+
+/* Where flat offset `a` lives, or NULL. Plane-major cell pointer, as vga_cell.
+   The fourth chunk is its own page when one was funded (vga_pages = 3), and
+   the off-screen cache otherwise -- which is 768 offsets short, and Epic
+   Pinball parks the backgrounds of its dot-matrix messages exactly there:
+   56 K lost stores and the messages left their dots on the table. */
+static inline uint8_t *modey_flat_cell(uint32_t a)
+{
+    uint32_t c = (a >> 14) & 3u, o = a & 0x3FFFu;
+
+    if (c == 3u) {
+        if (modey_page3)
+            return modey_page3 + 4u * o;
+        return o < modey_cache_offs ? modey_cache + 4u * o : 0;
+    }
+    return (c ? modey_pgstore[c - 1u] : x86_vga_planar_aperture) + 4u * o;
 }
 
 /* ---------------------------------------------------------------------------
@@ -621,6 +728,8 @@ PLANAR_HOT static uint8_t *vga_cell(uint32_t a)
 #if X86_MODEY_PAGE_NEGCTL
     return x86_vga_planar_aperture + 4u * (a & X86_MODEY_MASK);
 #else
+    if (x86_vga_modey_flat)
+        return modey_flat_cell(a & 0xFFFFu);
     if (a >= X86_MODEY_CACHE) {
         a -= X86_MODEY_CACHE;
         if (a >= modey_cache_offs)
@@ -678,6 +787,16 @@ int x86_vga_modey_row_at(uint32_t a, const uint8_t **base, uint32_t *off)
     *off  = a & X86_MODEY_MASK;
     return 1;
 #else
+    if (x86_vga_modey_flat) {
+        /* `base` + 4*`off` is the cell; a row that crosses a 16 K chunk is
+           finished by the blit through a second call (see blit_vga13). */
+        uint8_t *c = modey_flat_cell(a & 0xFFFFu);
+        if (!c)
+            return 0;
+        *base = c - 4u * (a & 0x3FFFu);
+        *off  = a & 0x3FFFu;
+        return 1;
+    }
     if (!modey_split(a, &pg, &o))
         return 0;
     *base = modey_page_base(pg);
@@ -1618,10 +1737,13 @@ static void fold_trap_set(int on)
        tests/test_video.py's latch arms must FAIL under it. */
     on = 0;
 #endif
+    /* The flat card reads through C (x86_vga_slow_access): a fold MISS. */
+    x86_vga_readfix = (on && x86_vga_modey_armed && x86_vga_modey_flat) ? 1u : 0u;
     for (uint32_t i = 0; i < n; i++)
         guest_page_table_ptr[first + i] =
-            on ? X86_FOLD_VGA_K(ap + (i << FOLD_SHIFT), first + i)
-               : FOLD_K(ap + (i << FOLD_SHIFT), first + i);
+            x86_vga_readfix ? FOLD_INVALID
+            : on ? X86_FOLD_VGA_K(ap + (i << FOLD_SHIFT), first + i)
+                 : FOLD_K(ap + (i << FOLD_SHIFT), first + i);
     x86_vga_fold_trap_armed = (uint32_t)on;
 }
 
@@ -1824,10 +1946,30 @@ void x86_vga_planar_gc_write(unsigned idx, uint8_t val)
  * The display start has been reprogrammed. Two consequences, and they are
  * separate: the stride learning, and the present edge.
  */
+static uint8_t start_hi_pending;
+
+/* CRTC 0x0C written: a start whose low byte may still be on its way. A
+   second 0x0C with no 0x0D between them settles the first; a title that
+   only ever writes the high byte (Wolf3D's pages are 0x4100 apart, low byte
+   0) is settled at the top of the next frame by x86_vga_planar_start_flush. */
+void x86_vga_planar_start_hi(void)
+{
+    if (start_hi_pending)
+        x86_vga_planar_start_write();
+    start_hi_pending = 1;
+}
+
+void x86_vga_planar_start_flush(void)
+{
+    if (start_hi_pending)
+        x86_vga_planar_start_write();
+}
+
 void x86_vga_planar_start_write(void)
 {
     uint32_t s, d;
 
+    start_hi_pending = 0;
     if (!x86_vga_modey_armed)
         return;
     s = x86_vga_crtc_start();
@@ -1836,7 +1978,7 @@ void x86_vga_planar_start_write(void)
 
     d = (s > modey_prev_start) ? s - modey_prev_start : modey_prev_start - s;
     modey_prev_start = s;
-    if (d >= X86_MODEY_PGMIN && d <= X86_MODEY_PGMAX
+    if (!x86_vga_modey_flat && d >= X86_MODEY_PGMIN && d <= X86_MODEY_PGMAX
         && (!modey_learned || d < x86_vga_modey_page)) {
         modey_learned = 1;
         x86_vga_modey_page = d;

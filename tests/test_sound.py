@@ -228,8 +228,8 @@ def playback(args, runner):
         first_bad = None
         for k, got in enumerate(pcm):
             src = k // SBD_HOLD                 # the guest wrote byte == index
-            want = ((src - 128) << 8)
-            want = (want * SBD_AMP) >> 15
+            want = (_lerp_out([(s - 128) << 8 for s in range(64)],
+                              k, SBD_HOLD) * SBD_AMP) >> 15
             if abs(got - want) > 2:
                 bad += 1
                 if first_bad is None:
@@ -240,7 +240,7 @@ def playback(args, runner):
                  f"First at output sample {k}: got {got}, expected {want} "
                  f"(the guest's byte {src} of the ramp, unsigned 8-bit). At "
                  f"{SBD_SRC_RATE} Hz into {SBD_OUT_RATE} Hz each source byte "
-                 f"must be held for exactly {SBD_HOLD} output samples -- so "
+                 f"must step through {SBD_HOLD} output samples (linear) -- so "
                  f"this catches a wrong DMA address, a wrong decode AND a "
                  f"wrong resampler step")
         else:
@@ -376,16 +376,24 @@ def _apc_decode(data, fmt, have_ref):
     return out
 
 
+def _lerp_out(src, k, hold):
+    """Output sample k of the SB resampler (x86_sb_render_mix, linear since
+    2026-11-06) for an integer ratio `hold`: the first source sample is held,
+    after that each output ramps from source j-1 to j at fraction (k % hold) /
+    hold -- one source sample of latency, the 16.16 arithmetic exactly."""
+    j = k // hold
+    prev = src[j - 1] if j else src[0]
+    frac = ((k % hold) << 16) // hold
+    return prev + (((src[j] - prev) * frac) >> 16)
+
+
 def _apc_expect(cmd):
     _, fmt, have_ref = APC_CMDS[cmd]
     dec = _apc_decode(_apc_src_bytes(), fmt, have_ref)
-    pcm = []
-    for d in dec:
-        v = ((d - 128) << 8)
-        v = (v * SBD_AMP) >> 15
-        for _ in range(APC_HOLD):
-            pcm.append(v)
-    return dec, pcm[:64]
+    lv = [(d - 128) << 8 for d in dec]
+    pcm = [(_lerp_out(lv, k, APC_HOLD) * SBD_AMP) >> 15
+           for k in range(min(64, len(lv) * APC_HOLD))]
+    return dec, pcm
 
 
 def adpcm(args, runner):
@@ -498,7 +506,7 @@ def adpcm(args, runner):
                  f"reference decode. First at output sample {k}: got {got}, "
                  f"expected {exp} (decoded sample {k // APC_HOLD} = "
                  f"{dec[k // APC_HOLD]}). At {APC_SRC_RATE} Hz into "
-                 f"{APC_OUT_RATE} Hz each decoded sample is held exactly "
+                 f"{APC_OUT_RATE} Hz each decoded sample spans exactly "
                  f"{APC_HOLD} outputs, so this catches the step table, the "
                  f"packing, the reference byte AND the resampler at once")
         else:
