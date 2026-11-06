@@ -1,0 +1,47 @@
+name: Build DosAT core
+
+# Builds dosat.bin (`make core`, with the core SDK vendored in sdk/) and keeps it as an
+# artifact; for a tag (a new release) dosat.bin is also attached to the release.
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          python3 -m pip install pillow
+          wget -q -O toolchain.tar.xz \
+            https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/15.2.rel1/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz
+          tar -xf toolchain.tar.xz -C "$RUNNER_TEMP"
+          echo "GCC_PATH=$RUNNER_TEMP/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: make core -j$(nproc) GCC_PATH="$GCC_PATH"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dosat-${{ github.sha }}
+          path: |
+            dosat.bin
+            build/core/dos_core.elf
+            build/core/dos_core.map
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dosat.bin
