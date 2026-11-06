@@ -145,6 +145,9 @@ int x86_video_modey_pages_pinned(void);
    instead of Wolf3D's three pages; needs both extra pages. */
 void x86_vga_modey_set_flat(int on);
 void x86_vga_modey_set_page3(void *p);
+/* The flat card's VRAM accesses, from x86_nor_slow_r/_w: 1 if handled. */
+int x86_vga_slow_access(uint32_t lin, int write);
+extern volatile uint32_t x86_vga_readfix;
 int x86_video_modey_layout_flat(void);
 extern volatile uint32_t x86_vga_modey_flat;
 

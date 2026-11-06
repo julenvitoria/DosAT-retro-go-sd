@@ -47,6 +47,7 @@
 #include <string.h>
 
 #include "cutils.h"
+#include "x86_video_planar.h"
 #include "x86_cpu.h"
 #include "x86_pager.h"
 
@@ -353,6 +354,8 @@ void x86_nor_slow_r(uint32_t bad)
     }
 
     if (is_fold_miss(bad, &lin)) {
+        if (x86_vga_readfix && x86_vga_slow_access(lin, 0))
+            return;
         cpu_state_ptr->nor_ptr = x86_pager_fault(lin, 0);
         if (!cpu_state_ptr->nor_ptr)
             x86_nor_unmapped++;
@@ -413,6 +416,8 @@ void x86_nor_slow_w(uint32_t bad)
     }
 
     if (is_fold_miss(bad, &lin)) {
+        if (x86_vga_readfix && x86_vga_slow_access(lin, 1))
+            return;
         cpu_state_ptr->nor_ptr = x86_pager_fault(lin, 1);
         if (!cpu_state_ptr->nor_ptr)
             x86_nor_unmapped++;

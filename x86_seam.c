@@ -58,6 +58,7 @@
 #include <string.h>
 
 #include "cutils.h"
+#include "x86_video_planar.h"
 #include "x86_cpu.h"
 #include "x86_pager.h"
 #include "x86_arena.h"
@@ -125,6 +126,10 @@ void x86_seam_sync(uint32_t lin)
 
     if (page + 1u >= FOLD_ENTRIES)
         return;                       /* nothing above it to straddle into */
+    /* The flat card's aperture is a fold miss by design (x86_vga_slow_access
+       serves it); it is not a demand fault and must not sour the pool flag. */
+    if (x86_vga_readfix && page >= 0xA0u && page <= 0xAFu)
+        return;
 
     uint32_t k  = guest_page_table_ptr[page];
     uint32_t k1 = guest_page_table_ptr[page + 1u];

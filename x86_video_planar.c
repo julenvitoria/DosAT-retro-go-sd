@@ -568,9 +568,64 @@ void x86_vga_modey_set_page3(void *p)
         memset(modey_page3, 0, 4u * X86_MODEY_PLANE);
 }
 
+static void fold_trap_set(int on);
+static uint8_t *vga_cell(uint32_t a);
+extern volatile uint32_t x86_vga_fold_trap_armed;
+
 void x86_vga_modey_set_flat(int on)
 {
     x86_vga_modey_flat = (on && modey_pgstore[1]) ? 1u : 0u;
+    /* The flat card also READS right (below): re-install the aperture's fold
+       entries in whichever form that needs. */
+    if (x86_vga_fold_trap_armed)
+        fold_trap_set(1);
+}
+
+/*
+ * CPU READS OF THE FLAT CARD.
+ *
+ * A Mode Y data read of A000:a must return plane (Read Map Select) at offset a.
+ * The aperture trap cannot: it hands the site the aperture byte at a, which in
+ * the interleaved store is plane a&3 of offset a>>2 -- "the wrong plane, by
+ * design and for want of 64 KB" (vga_cell's header). Wolf3D never reads its
+ * screen; Epic Pinball does, to put back the table under the ball and under
+ * its dot-matrix messages, and every restore drew yellow lines and dots along
+ * the ball's path.
+ *
+ * So on the flat card the aperture's fold entries are a plain FOLD MISS, and
+ * every access reaches x86_nor_slow_r/_w, which hand it here. A read gets a
+ * pointer to eight STAGED bytes, plane rm of offsets a..a+7 (an access is at
+ * most four; eight is the slack a seam check could look at), and the latch is
+ * recorded as the trap would have. A write gets the plain aperture pointer, so
+ * the site's VGA_ST hook runs exactly as before. Slower -- a C call per VRAM
+ * access -- and only for the title whose .cfg asked for the flat card.
+ */
+volatile uint32_t x86_vga_readfix;
+volatile uint32_t x86_vga_readfix_reads;
+static uint8_t readfix_stage[8];
+
+int x86_vga_slow_access(uint32_t lin, int write)
+{
+    uint32_t a = lin - 0xA0000u;
+    uint8_t *ap = x86_vga_planar_aperture;
+
+    if (!x86_vga_readfix || a >= 0x10000u || !ap || !cpu_state_ptr)
+        return 0;
+    if (write) {
+        cpu_state_ptr->nor_ptr = (uint32_t)(uintptr_t)(ap + a);
+        return 1;
+    }
+    {
+        const uint32_t rm = gc[4] & 3u;
+        for (uint32_t i = 0; i < sizeof readfix_stage; i++) {
+            const uint8_t *c = vga_cell((a + i) & 0xFFFFu);
+            readfix_stage[i] = c ? c[rm] : 0u;
+        }
+    }
+    x86_vga_readfix_reads++;
+    cpu_state_ptr->vga_latch = (uint32_t)(uintptr_t)(ap + a);
+    cpu_state_ptr->nor_ptr = (uint32_t)(uintptr_t)readfix_stage;
+    return 1;
 }
 
 /* Where flat offset `a` lives, or NULL. Plane-major cell pointer, as vga_cell.
@@ -1682,10 +1737,13 @@ static void fold_trap_set(int on)
        tests/test_video.py's latch arms must FAIL under it. */
     on = 0;
 #endif
+    /* The flat card reads through C (x86_vga_slow_access): a fold MISS. */
+    x86_vga_readfix = (on && x86_vga_modey_armed && x86_vga_modey_flat) ? 1u : 0u;
     for (uint32_t i = 0; i < n; i++)
         guest_page_table_ptr[first + i] =
-            on ? X86_FOLD_VGA_K(ap + (i << FOLD_SHIFT), first + i)
-               : FOLD_K(ap + (i << FOLD_SHIFT), first + i);
+            x86_vga_readfix ? FOLD_INVALID
+            : on ? X86_FOLD_VGA_K(ap + (i << FOLD_SHIFT), first + i)
+                 : FOLD_K(ap + (i << FOLD_SHIFT), first + i);
     x86_vga_fold_trap_armed = (uint32_t)on;
 }
 
