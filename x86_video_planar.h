@@ -35,6 +35,11 @@
 unsigned       x86_vga_crtc_start(void);    /* display start, plane offsets   */
 unsigned       x86_vga_row_pitch(void);     /* 2 x CRTC Offset                */
 unsigned       x86_vga_pel_panning(void);   /* ATC index 0x13, low 3 bits     */
+/* Mode X geometry: rows on screen (200, or 240 when the CRTC is programmed
+   for 480 scanlines doubled) and the split-screen row (line compare), or
+   0xFFFF for none. Unchained 256-colour only. */
+unsigned       x86_vga_modex_rows(void);
+unsigned       x86_vga_split_row(void);
 const uint8_t *x86_vga_attr_palette(void);  /* ATC 0x00-0x0F, 16 entries      */
 uint8_t *x86_vga_attr_regs(void);           /* the same, writable (INT 10h)    */
 
