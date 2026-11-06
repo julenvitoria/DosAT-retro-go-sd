@@ -1564,6 +1564,10 @@ static void planar_storage_follow(uint8_t kind)
 #ifndef X86_MODEY_EXTRA_PAGES
 #define X86_MODEY_EXTRA_PAGES 2u
 #endif
+    /* The rung is per title now: `[video] vga_pages` in the .cfg (see
+       x86_settings.h, X86_SET_VGA_PAGES). This is the compiled default, and
+       what the harness gets; src/main.c overrides it. */
+    const unsigned extra = x86_video_modey_extra_pages();
     /*
      * DONATE ONLY WHAT THE ARENA CANNOT ALREADY PLACE.
      *
@@ -1584,16 +1588,16 @@ static void planar_storage_follow(uint8_t kind)
      * MEASURED NO-OP TODAY: at the shipping rung the would_fit test is false
      * and the donation happens exactly as before (x86_pg_frames_total 126).
      */
-    if (X86_MODEY_EXTRA_PAGES
-        && !x86_arena_would_fit(X86_ARENA_ID_MODEYP, X86_MODEY_EXTRA_PAGES,
+    if (extra
+        && !x86_arena_would_fit(X86_ARENA_ID_MODEYP, extra,
                                 X86_MODEY_PAGE_BYTES))
-        x86_pager_donate_upto(X86_MODEY_EXTRA_PAGES * X86_MODEY_PAGE_BYTES,
+        x86_pager_donate_upto(extra * X86_MODEY_PAGE_BYTES,
                               X86_MODEY_PAGE_BYTES);
     void *pg[2] = { NULL, NULL };
-    if (X86_MODEY_EXTRA_PAGES >= 2u
+    if (extra >= 2u
         && x86_arena_claim(X86_ARENA_ID_MODEYP, 2, X86_MODEY_PAGE_BYTES, pg) == 0)
         x86_vga_modey_set_pages(pg[0], pg[1]);
-    else if (X86_MODEY_EXTRA_PAGES >= 1u
+    else if (extra >= 1u
              && x86_arena_claim(X86_ARENA_ID_MODEYP, 1, X86_MODEY_PAGE_BYTES,
                                 pg) == 0)
         x86_vga_modey_set_pages(pg[0], NULL);
@@ -1602,6 +1606,17 @@ static void planar_storage_follow(uint8_t kind)
            wanted and x86_vga_modey_pages stays 1. */
         x86_vga_modey_set_pages(NULL, NULL);
     x86_video_log_event(9, x86_vga_modey_pages, 0);
+}
+
+/* How many extra Mode Y pages to fund. Weak: the core's frame loop overrides
+   it with the title's `[video] vga_pages`; anything else gets the build's. */
+__attribute__((weak)) unsigned x86_video_modey_extra_pages(void)
+{
+#ifndef X86_MODEY_EXTRA_PAGES
+    return 2u;
+#else
+    return X86_MODEY_EXTRA_PAGES;
+#endif
 }
 
 /*

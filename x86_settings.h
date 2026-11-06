@@ -169,6 +169,18 @@ typedef enum {
     X86_SET_OPL = 5,
     X86_SET_SB  = 6,
 
+    /*
+     * `[video] vga_pages`: extra Mode Y display pages, each 64 KB. The default
+     * is the Makefile's X86_MODEY_EXTRA_PAGES (1), the rung that fits the free
+     * arena with no frames donated. 2 is the whole card a smooth-scrolling
+     * title needs -- Epic Pinball scrolls its table through all of VRAM, and on
+     * one page the third aliased onto the shown one and the picture doubled --
+     * at the price of ~13 pager frames, donated when the guest arms Mode Y.
+     * 0 keeps the single aliased page. Per title, because that trade is per
+     * title: WOLF3D's level loads stall on the smaller pool.
+     */
+    X86_SET_VGA_PAGES = 7,
+
     X86_SET_COUNT
 } x86_setting_id_t;
 
