@@ -4025,6 +4025,50 @@ static void dma2d_selftest(void)
 static void dma2d_sync(void) { }
 #endif
 
+/*
+ * RETRO-GO'S HUD ON A MODE Y SCREEN (owner, 2026-11-06: "in Epic Pinball the
+ * volume and brightness bars do not show"). The firmware draws the bars into
+ * the ACTIVE buffer only, and a Mode Y title paints BOTH buffers itself, on
+ * its own flips -- so the HUD was simply never drawn there. While it is up it
+ * is now drawn after each paint into the active buffer and its corner copied
+ * to the other one (the panel shows either); 60 x 140 bytes, not the frame,
+ * because the framebuffers are uncached and a full read-back costs
+ * milliseconds. When it goes, one more call lets the firmware give back the
+ * CLUT slots it borrowed, and a repaint wipes the bars.
+ */
+#define HUD_COPY_X 260u
+#define HUD_COPY_W (FRAME_W - HUD_COPY_X)
+#define HUD_COPY_H 142u
+static uint8_t modey_hud_was;
+
+static void modey_hud_draw(const gw_firmware_abi_t *abi)
+{
+    uint8_t *a = (uint8_t *)abi->lcd_get_active_buffer();
+    uint8_t *b = (uint8_t *)abi->lcd_get_inactive_buffer();
+    abi->common_ingame_overlay();
+    if (!a || !b)
+        return;
+    for (unsigned y = 0; y < HUD_COPY_H; y++)
+        memcpy(b + y * FRAME_W + HUD_COPY_X, a + y * FRAME_W + HUD_COPY_X,
+               HUD_COPY_W);
+}
+
+static void modey_paint_both(const gw_firmware_abi_t *abi);
+
+/* Once a frame while the screen is unchained, painted or not. */
+static void modey_hud_frame(const gw_firmware_abi_t *abi)
+{
+    int vis = common_emu_state.overlay != 0;
+    if (vis && !modey_hud_was)
+        modey_hud_draw(abi);           /* raised between two paints */
+    else if (!vis && modey_hud_was) {
+        abi->common_ingame_overlay();  /* releases the HUD's CLUT slots */
+        modey_hud_was = 0;
+        modey_paint_both(abi);         /* and wipes the bars */
+    }
+    modey_hud_was = (uint8_t)vis;
+}
+
 static void modey_paint_both(const gw_firmware_abi_t *abi)
 {
     /* VPROF: the PARENT bracket. x86_video_render() and x86_osk_draw() carry
@@ -4047,6 +4091,8 @@ static void modey_paint_both(const gw_firmware_abi_t *abi)
             X86_VPROF_END(ok, osk);
         }
     }
+    if (common_emu_state.overlay)
+        modey_hud_draw(abi);
     X86_VPROF_END(pt, paint);
 }
 
@@ -5350,8 +5396,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        draws into the ACTIVE buffer, so it belongs right here,
                        after everything of ours and before the swap. The Mode
                        Y arm above paints BOTH buffers on its own schedule and
-                       does not get it: drawn into one of two buffers the bars
-                       would flicker at the panel rate. */
+                       draws it there (modey_hud_draw), into both. */
                     {
                         const uint32_t *pal = x86_video_clut256();
                         if (pal && vga_aperture && common_emu_state.overlay)
@@ -5360,6 +5405,8 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                     abi->common_ingame_overlay();
                 }
             }
+            if (x86_vga_is_unchained())
+                modey_hud_frame(abi);  /* the Mode Y arm's HUD: modey_hud_draw() */
             fb_sample = *(volatile uint32_t *)(fb + 20 * FRAME_W);
         }
         clut_sample = core_clut[1];
