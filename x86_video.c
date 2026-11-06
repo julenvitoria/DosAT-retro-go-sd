@@ -544,6 +544,10 @@ static void video_render_body(uint8_t *dst, uint32_t stride)
     mode_sync_from_bda();
 
     unsigned band = (240u - CGA_HEIGHT) / 2u;
+    /* Mode X at 240 rows fills the panel: no letterbox (vga13_blit). */
+    if (cur_desc && cur_desc->kind == VM_VGA8 && x86_vga_is_unchained()
+        && x86_vga_modex_rows() == 240u)
+        band = 0;
     int aa = X86_TEXT_AA && x86_video_is_text() && x86_text_aa;
     /* Index 0 is CGA black everywhere EXCEPT under a per-frame anti-aliased
        allocation, where entry 0 is level 0 of whichever pair happened to rank
@@ -896,8 +900,15 @@ static void vga13_blit(uint8_t *dst, uint32_t stride)
     const unsigned pitch = X86_MODEY_STRIDE_NEGCTL ? x86_vga_row_pitch() / 2u
                                                    : x86_vga_row_pitch();
     const unsigned start = x86_vga_crtc_start();
+    /* Mode X: 240 rows when the CRTC is timed for them, and the split screen
+       restarting at offset 0 (x86_io.c, x86_vga_modex_rows). The caller has
+       dropped the letterbox for 240. */
+    const unsigned rows  = x86_vga_modex_rows();
+    const unsigned split = x86_vga_split_row();
 
-    for (unsigned y = 0; y < X86_VGA13_HEIGHT; y++, dst += stride) {
+    for (unsigned y = 0; y < rows; y++, dst += stride) {
+        const uint32_t row_a = (y < split) ? start + y * pitch
+                                           : (y - split) * pitch;
         /* The CORE owns the page fold, and it is NOT a mask -- the page stride
            is whatever the guest programmed, and WOLF3D's is 16,640. This is the
            same lookup the store path uses, so the blit and the writes cannot
@@ -908,7 +919,7 @@ static void vga13_blit(uint8_t *dst, uint32_t stride)
         const uint8_t *pb;
         uint32_t a;
 
-        if (!x86_vga_modey_row_at(start + y * pitch, &pb, &a)) {
+        if (!x86_vga_modey_row_at(row_a, &pb, &a)) {
             /* No aperture storage for this row: off-screen, or a page tail.
                BLACK rather than whatever the previous frame left, so a
                mis-learned layout is VISIBLE instead of merely plausible. */
@@ -933,8 +944,7 @@ static void vga13_blit(uint8_t *dst, uint32_t stride)
                    16 K chunk, which is other storage, not this one again. */
                 const uint8_t *pb2;
                 uint32_t a2;
-                if (x86_vga_modey_row_at(start + y * pitch
-                                         + (X86_MODEY_PLANE_OFFSETS - a),
+                if (x86_vga_modey_row_at(row_a + (X86_MODEY_PLANE_OFFSETS - a),
                                          &pb2, &a2))
                     memcpy(dst + head, pb2 + 4u * a2, X86_VGA13_WIDTH - head);
                 else

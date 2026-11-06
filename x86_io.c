@@ -543,6 +543,41 @@ unsigned x86_vga_row_pitch(void)
     return off ? off * 2u : 80u;
 }
 
+/*
+ * MODE X: 240 ROWS AND THE SPLIT SCREEN.
+ *
+ * A title that reprograms the vertical timing for 480 scanlines (Vertical
+ * Display End 0x1DF, bits 8/9 in Overflow 0x07) with every row scanned twice
+ * is showing 320x240, which is exactly this panel -- Epic Pinball does, and
+ * at 200 rows its bottom 40 were never shown. Anything else stays 200.
+ *
+ * Line Compare (0x18, bit 8 in 0x07 bit 4, bit 9 in 0x09 bit 6) is the
+ * split screen: from that scanline down the card restarts at offset 0. Epic
+ * keeps its dot-matrix score board there, under the scrolling table; without
+ * it the board was drawn into the table and the table scrolled through it.
+ */
+static unsigned vga_scan_per_row(void)
+{
+    unsigned s = (vga_regs.crtc[0x09] & 0x1Fu) + 1u;
+    return (vga_regs.crtc[0x09] & 0x80u) ? 2u * s : s;
+}
+
+unsigned x86_vga_modex_rows(void)
+{
+    unsigned ov = vga_regs.crtc[0x07];
+    unsigned vde = vga_regs.crtc[0x12] | ((ov >> 1) & 1u) << 8
+                 | ((ov >> 6) & 1u) << 9;
+    return ((vde + 1u) / vga_scan_per_row() == 240u) ? 240u : 200u;
+}
+
+unsigned x86_vga_split_row(void)
+{
+    unsigned lc = vga_regs.crtc[0x18] | ((vga_regs.crtc[0x07] >> 4) & 1u) << 8
+                | ((vga_regs.crtc[0x09] >> 6) & 1u) << 9;
+    unsigned row = (lc + 1u) / vga_scan_per_row();
+    return row < x86_vga_modex_rows() ? row : 0xFFFFu;
+}
+
 /* Attribute Controller index 0x13, low 3 bits: the horizontal pel pan, in
    pixels. A scrolling EGA title reprograms it every frame. */
 unsigned x86_vga_pel_panning(void) { return vga_regs.attr[0x13] & 7u; }
@@ -566,6 +601,14 @@ void x86_vga_crtc_preset(uint8_t mode)
     vga_regs.crtc[0x0C] = 0;
     vga_regs.crtc[0x0D] = 0;
     vga_regs.crtc[0x13] = (mode == 0x13) ? 0x28 : 0x14;
+    /* The vertical registers the Mode X geometry reads (x86_vga_modex_rows,
+       x86_vga_split_row), at a VGA BIOS's values: 400 scanlines, every row
+       twice (0Dh: 0xC0 doubles too), Line Compare 0x3FF = no split. Left at
+       0 they would read as a split at the top of the screen. */
+    vga_regs.crtc[0x07] = 0x1F;
+    vga_regs.crtc[0x09] = (mode == 0x13) ? 0x41 : 0xC0;
+    vga_regs.crtc[0x12] = 0x8F;
+    vga_regs.crtc[0x18] = 0xFF;
     /* Identity attribute palette. Pixel value n -> DAC entry n, which in a VGA
        DAC IS the sixteen EGA colours -- IBM's 00 01 02 03 04 05 14 07 38.. are
        indices into a 64-entry EGA DAC layout and would recolour every EGA-16
