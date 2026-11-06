@@ -219,13 +219,23 @@
         ADD.W \out, \out, \tmp
     .endm
 
+    /* At address size 16 only SI/DI move: the high half of ESI/EDI is NOT
+       part of the index and must survive. The old UXTH + full store zeroed
+       it, and DOS/4GW runs its real-mode reflection code (16-bit `rep movsw`
+       and friends at 04C0:0C24) with the interrupted 32-bit program's ESI/EDI
+       still live -- so every reflected IRQ that landed inside a 32-bit REP
+       turned EDI 0x008B4500 into 0x00004500, and Doom's startup memset of its
+       BSS zeroed linear 0x4500..0x5500 instead: DOS/4GW's own real-mode
+       kernel, then a wild IRET a tick later (owner's Doom / Dark Forces, both
+       stuck on the DOS/4GW banner, 2026-11-06). A STRH writes exactly SI/DI,
+       and wraps them for free. */
     .macro STR_ADV off, delta, tmp
         LDR.W \tmp, [R8, #\off]
         ADD.W \tmp, \tmp, \delta
         TST.W R2, #ADDRSIZE_XOR
-        IT EQ
-        UXTHEQ \tmp, \tmp            @ SI/DI wrap at the address size
-        STR.W \tmp, [R8, #\off]
+        ITE EQ
+        STRHEQ.W \tmp, [R8, #\off]  @ SI/DI wrap at the address size
+        STRNE.W \tmp, [R8, #\off]
     .endm
 
     /* A `moffs` is an OFFSET in DS (or an override), taken at the ADDRESS

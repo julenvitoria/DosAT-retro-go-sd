@@ -803,6 +803,33 @@ def run_test(args):
                 "mem_expected": [(0x2000, bytes([0xAA, 0xBB, 0xCC]))],
             },
             {
+                # ...and the same for the INDEX registers. At address size 16
+                # only SI/DI move; ESI/EDI[31:16] belong to whoever owns the
+                # 32-bit value. STR_ADV truncated and stored all 32 bits, so a
+                # DOS/4GW reflection running `rep movsw` in real mode zeroed
+                # the high half of the interrupted program's EDI: Doom's BSS
+                # memset then cleared 0x4500.. instead of 0x8B4500.., i.e.
+                # DOS/4GW's own real-mode kernel (docs/13, Doom).
+                "name": "REP MOVSB (16-bit) preserves the high half of ESI/EDI",
+                "mode": 16,
+                "code": bytes([0xF3, 0xA4, 0xF4]),
+                "regs_initial": {1: 3, 6: 0x00911000, 7: 0x008B2000},
+                "regs_expected": {1: 0, 6: 0x00911003, 7: 0x008B2003},
+                "expected_eip": 3,
+                "ram_setup": [(0x1000, bytes([0xAA, 0xBB, 0xCC]))],
+                "mem_expected": [(0x2000, bytes([0xAA, 0xBB, 0xCC]))],
+            },
+            {
+                "name": "STOSW (16-bit) leaves EDI[31:16] alone",
+                "code": bytes([0xAB, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"ES": 0x2000},
+                "regs_initial": {0: 0x1234, 7: 0x00910040},
+                "regs_expected": {7: 0x00910042},
+                "mem_expected": [(0x2040, bytes([0x34, 0x12]))],
+                "expected_eip": 2,
+            },
+            {
                 "name": "Grp3 F7 MUL EBX",
                 # F7 E3 -> MUL EBX (Reg=4, R/M=3 -> Mod=11, Reg=100, R/M=011 -> 11 100 011 = 0xE3)
                 "code": bytes([0xF7, 0xE3, 0xF4]), 
