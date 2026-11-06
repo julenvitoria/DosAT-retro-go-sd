@@ -1963,6 +1963,23 @@ def run_test(args):
                 "expected_eip": 4,
             },
 
+            {
+                "name": "67 REP 66 MOVSD survives the batch-cap rewind",
+                # a32 REP MOVSD ; HLT  300 dwords: the batch cap (256) rewinds
+                # the REP once, and the restart must keep the 67. ESI/EDI are
+                # above 64 KB, so a restart with 16-bit addressing copies the
+                # last 44 dwords from DS:SI to ES:DI instead.
+                "code": bytes([0x67, 0xF3, 0x66, 0xA5, 0xF4]),
+                "mode": 16,
+                # segs_initial sets the BASE: source 0x11010, dest 0x33020
+                "segs_initial": {"DS": 0x1000, "ES": 0x23000},
+                "ram_setup": [(0x11010, bytes([0x5A]) * 1200)],
+                "regs_initial": {1: 300, 6: 0x10010, 7: 0x10020},
+                "regs_expected": {1: 0, 6: 0x10010 + 1200, 7: 0x10020 + 1200},
+                "mem_expected": [(0x33020 + 1196, bytes([0x5A] * 4 + [0]))],
+                "expected_eip": 5,
+            },
+
             # --- REP: the batched fast path's boundaries ----------------------
             # .str_exit re-enters the string handler directly for up to
             # REP_BATCH_MAX (256) elements instead of rewinding EIP to the

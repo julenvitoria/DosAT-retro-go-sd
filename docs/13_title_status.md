@@ -538,9 +538,16 @@ Forces gets past the reflection and prints the DOS/4GW banner, with no fault
 in 53 s of tier 2. The 3D18 variants were the same bug: the `pop ds` there
 read a word of a frame that had never been copied.
 
-Still open from this: a REP rewound at a slice end or an IRQ restarts at the
-`F3`, so a prefix BEFORE it (`67 F3 66 A5`) is lost on the restart. Harmless
-while ESI/EDI/ECX fit in 16 bits; wrong for a big (32-bit) stack.
+Second half, same night: a REP rewound at a slice end, the batch cap or an
+IRQ restarted at the `F3`, dropping any prefix BEFORE it -- `67 F3 66 A5`
+came back as a 16-bit-address copy, wrong as soon as ESI/EDI pass 64 KB (a
+DOS/4GW 32-bit stack). The rewind point now backs over the 66/67/segment
+prefixes R2 and R6 show were taken. Test: `67 REP 66 MOVSD survives the
+batch-cap rewind` (300 dwords above 64 KB), seen to FAIL without the fix.
+
+Where it stands (tier 2, 58 s cap): the DOS/4GW banner, then DOS/16M keeps
+reading the game (749 file calls by t+53 s and still climbing at t+51) with
+CR0.PG never set. gwemu is slow at this; the device should show more.
 
 **Earlier suspects, in order (the first two now look less likely):**
 - `MOV SS`/`POP SS` do NOT inhibit interrupts (a known semantic gap, STATUS.md).

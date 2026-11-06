@@ -4175,7 +4175,21 @@ L(REP_ONE):
     STRHEQ.W R5, [R8, #REG_ECX]
     STRNE.W R5, [R8, #REG_ECX]
     STR.W R4, [R8, #CPU_REP_ZF_SENSE]
-    SUB.W R3, R10, #1              @ this prefix, for the rewind
+    /* THE REWIND POINT IS THE START OF THE INSTRUCTION, not the F3. A slice end
+       or an IRQ restarts the REP from here, and restarting at the F3 drops
+       every prefix in front of it: `67 F3 66 A5` came back as `F3 66 A5`, a
+       16-bit-address copy of a frame DOS/16M was writing to a 32-bit stack.
+       R2 and R6 are reset at the instruction boundary, so whatever differs now
+       was done by a prefix before this one -- one byte each. */
+    LDR.W R12, [R8, #TABLE_BASE_OFFSET]
+    EOR.W R12, R12, R2
+    UBFX R12, R12, #11, #2         @ OPSIZE_XOR, ADDRSIZE_XOR: 66 / 67 seen
+    SUB.W R12, R12, R12, LSR #1    @ ...as a count, 0..2
+    SUB.W R3, R10, #1
+    SUB.W R3, R3, R12
+    CMP R6, R8
+    IT NE
+    SUBNE R3, R3, #1               @ a segment override before the REP
     STR.W R3, [R8, #CPU_REP_RESUME]
     /* The batch re-entry point, taken from the LIVE dispatch table with the
        opcode still in R0, so it is by construction the same handler the fetch
