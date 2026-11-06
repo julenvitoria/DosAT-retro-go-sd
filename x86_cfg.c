@@ -130,6 +130,13 @@ static const x86_cfg_key_t x86_cfg_keys[] = {
     { "oplmode",      "sblaster", X86_SET_OPL,      X86_CFG_T_NONE    },
     { "sbtype",       "sblaster", X86_SET_SB,       X86_CFG_T_NONE    },
 
+    /* ---- [video] -----------------------------------------------------------
+     *
+     * This core's own key: how many extra Mode Y pages to fund (0..2). DOSBox
+     * has nothing like it because its card always has 256 KB; here the card is
+     * built from whatever memory the guest can spare. See x86_settings.h. */
+    { "vga_pages",    "video",    X86_SET_VGA_PAGES, X86_CFG_T_INT     },
+
     /* ---- launch parameters, written out ------------------------------------
      *
      * The `[autoexec]` section below is the DOSBox way and is what most files
