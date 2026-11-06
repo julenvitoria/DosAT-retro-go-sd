@@ -46,9 +46,12 @@ Perfiles (los mismos que el menú de retro-go, PAUSE/SET → CPU Speed):
 | 4 | 386SX a 16 MHz | 2500 |
 | 5 | 386DX a 25 MHz | 4500 |
 
-La consola da unas 5.500 k, así que no hay perfiles más rápidos que el 386DX
-25: un 386DX 33 o un 486 irían igual que Max. Un `cycles` de 5500 o más es Max;
-un `cpu_profile` antiguo de 6 a 8 también pasa a Max.
+**Max no frena nada: la CPU va todo lo rápido que da la consola**, unas
+5.500 k en el mejor caso (como un 386DX a unos 30 MHz). Es el perfil
+«vitaminado» para los juegos pesados; uno fijo de 5500 no sumaría nada, porque
+la consola no puede ir más deprisa que Max, y en las escenas pesadas da menos.
+Por eso no hay perfiles por encima del 386DX 25: un `cycles` de 5500 o más es
+Max, y un `cpu_profile` antiguo de 6 a 8 también pasa a Max.
 
 Algunos juegos de la época fallan o van demasiado rápidos con una CPU rápida;
 para esos, un perfil lento.
@@ -64,14 +67,35 @@ para esos, un perfil lento.
 
 ### `[sblaster]`
 
+El núcleo trae dos tarjetas de sonido fijas y estas dos claves solo sirven
+para **quitarlas**:
+
 | Clave | Valores | Qué hace |
 |---|---|---|
-| `oplmode` | `none`, o cualquier modelo (`auto`, `opl2`, `opl3`…) | `none` = sin chip FM: ni AdLib ni la música FM de la Sound Blaster. |
-| `sbtype` | `none`, o cualquier modelo (`sb16`, `sbpro2`…) | `none` = sin Sound Blaster (tampoco se anuncia `BLASTER`). |
+| `oplmode` | `none` para quitarlo; cualquier otra cosa lo deja | El chip FM (OPL): la música AdLib y la parte FM de la Sound Blaster. |
+| `sbtype` | `none` para quitarla; cualquier otra cosa la deja | La Sound Blaster (voces y efectos digitalizados). Sin ella tampoco se anuncia la variable `BLASTER`. |
 
-Son las mismas claves de DOSBox. Sin ellas está todo: AdLib y Sound Blaster.
+Los nombres son los de DOSBox para que un `.cfg` copiado de allí funcione,
+pero aquí no se elige modelo: `sb16`, `sbpro2`, `opl3`… valen lo mismo que no
+poner nada. Sin estas claves están las dos tarjetas.
+
+La Sound Blaster es una **Sound Blaster 16** (DSP 4.05) en la configuración
+estándar, la que casi todos los juegos proponen por defecto:
+
+| Ajuste | Valor |
+|---|---|
+| Puerto | 220 |
+| IRQ | 5 |
+| DMA (8 bits) | 1 |
+| DMA (16 bits) | 5 |
+
+Es decir, `BLASTER=A220 I5 D1 H5 T6`. Si el instalador o el `SETUP` del juego
+pregunta, elige Sound Blaster (o Sound Blaster 16) con esos valores, y AdLib
+para la música si la ofrece aparte.
+
 Una tarjeta quitada no responde, como una ranura vacía, y el juego pasa a la
-siguiente que conozca (normalmente el altavoz del PC).
+siguiente que conozca (normalmente el altavoz del PC). Sirve para juegos que se
+cuelgan o suenan mal con una de ellas.
 
 ### `[autoexec]`
 

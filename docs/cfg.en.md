@@ -45,9 +45,12 @@ Profiles (the same as the retro-go menu, PAUSE/SET → CPU Speed):
 | 4 | 386SX at 16 MHz | 2500 |
 | 5 | 386DX at 25 MHz | 4500 |
 
-The console delivers about 5,500 k, so there are no profiles faster than the
-386DX 25: a 386DX 33 or a 486 would run the same as Max. A `cycles` of 5500 or
-more is Max; an old `cpu_profile` of 6 to 8 also becomes Max.
+**Max does not hold anything back: the CPU runs as fast as the console can**,
+about 5,500 k at best (like a 386DX at about 30 MHz). It is the "boosted"
+profile for heavy games; a fixed 5500 one would add nothing, because the
+console cannot go faster than Max, and gives less in heavy scenes. That is why
+there are no profiles above the 386DX 25: a `cycles` of 5500 or more is Max,
+and an old `cpu_profile` of 6 to 8 also becomes Max.
 
 Some games of the period break or run too fast on a fast CPU; use a slow
 profile for those.
@@ -63,14 +66,34 @@ profile for those.
 
 ### `[sblaster]`
 
+The core has two fixed sound cards, and these two keys only **remove** them:
+
 | Key | Values | What it does |
 |---|---|---|
-| `oplmode` | `none`, or any model (`auto`, `opl2`, `opl3`…) | `none` = no FM chip: neither AdLib nor the Sound Blaster's FM music. |
-| `sbtype` | `none`, or any model (`sb16`, `sbpro2`…) | `none` = no Sound Blaster (and no `BLASTER` variable). |
+| `oplmode` | `none` removes it; anything else keeps it | The FM chip (OPL): AdLib music and the Sound Blaster's FM half. |
+| `sbtype` | `none` removes it; anything else keeps it | The Sound Blaster (digitised speech and effects). Without it the `BLASTER` variable is not set either. |
 
-The same keys as DOSBox. Without them everything is there: AdLib and Sound
-Blaster. A removed card does not answer, like an empty slot, and the game moves
-on to the next one it knows (usually the PC speaker).
+The names are DOSBox's so a `.cfg` copied from there works, but no model is
+chosen here: `sb16`, `sbpro2`, `opl3`… mean the same as leaving the key out.
+Without these keys both cards are there.
+
+The Sound Blaster is a **Sound Blaster 16** (DSP 4.05) at the standard
+settings, the ones almost every game offers by default:
+
+| Setting | Value |
+|---|---|
+| Port | 220 |
+| IRQ | 5 |
+| DMA (8-bit) | 1 |
+| DMA (16-bit) | 5 |
+
+That is `BLASTER=A220 I5 D1 H5 T6`. If the game's installer or `SETUP` asks,
+pick Sound Blaster (or Sound Blaster 16) with those values, and AdLib for music
+if it is offered separately.
+
+A removed card does not answer, like an empty slot, and the game moves on to
+the next one it knows (usually the PC speaker). Useful for games that hang or
+sound wrong with one of them.
 
 ### `[autoexec]`
 
