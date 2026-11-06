@@ -791,6 +791,105 @@ uint32_t x86_speaker_hz(void)
     return d == X86_SPK_CLICK ? 0 : x86_spkr_freq_hz(d);
 }
 
+/*
+ * THE DATA BIT AS A LEVEL, ON THE GUEST'S OWN CLOCK.
+ *
+ * With channel 2's gate off the cone follows port 0x61 bit 1 alone, and a
+ * title that plays SAMPLES through the speaker does exactly that: it toggles
+ * the bit thousands of times a second and the duty cycle is the waveform.
+ * Risky Woods plays all of its effects so (1,630 changes in its first second
+ * of play, 484 more than the event ring below could even hold). The ring is
+ * stamped in HOST milliseconds and its data-bit edges were drawn as fixed
+ * decaying clicks, eight a buffer at most -- the "distorted" effects, against
+ * a DOSBox recording of the same moment.
+ *
+ * So every change of the bit with the gate off is also kept here, stamped in
+ * PIT ticks (x86_pit_ticks, the clock the guest times its own toggles with),
+ * and the render integrates the level over each output sample: the box
+ * filter a cone does to a pulse train, which turns the duty cycle back into
+ * the sample. A short pulse is energy in proportion to its width rather than a
+ * standard click. 4 KB from the host allocator on the first edge, so a title
+ * that never does this pays nothing; without an allocator the clicks stay.
+ */
+#define SPK_LV_RING 1024u                /* power of two; ~70 ms at 16 kHz */
+volatile uint32_t x86_spk_lv_edges;      /* data-bit edges recorded (free-running) */
+volatile uint32_t x86_spk_lv_dropped;    /* recorded past a full ring */
+static uint32_t *spk_lv_buf;             /* (tick << 1) | level */
+static uint32_t  spk_lv_head, spk_lv_tail;
+static uint32_t  spk_lv_t0;              /* PIT tick the next render starts at */
+static uint8_t   spk_lv_level, spk_lv_render_level;
+
+static void spk_lv_put(uint8_t value)
+{
+    uint8_t lvl = (uint8_t)((value & 3u) == 2u);
+    if (lvl == spk_lv_level)
+        return;
+    spk_lv_level = lvl;
+    if (!spk_lv_buf) {
+        if (!x86_io_alloc)
+            return;
+        spk_lv_buf = (uint32_t *)x86_io_alloc(SPK_LV_RING * 4u);
+        if (!spk_lv_buf)
+            return;
+        spk_lv_t0 = x86_pit_ticks();
+    }
+    if (spk_lv_tail - spk_lv_head >= SPK_LV_RING) {
+        x86_spk_lv_dropped++;
+        return;
+    }
+    spk_lv_buf[spk_lv_tail++ & (SPK_LV_RING - 1u)] = (x86_pit_ticks() << 1) | lvl;
+    x86_spk_lv_edges++;
+}
+
+/* Integrate the data bit over this buffer's guest time and add it in. */
+static void spk_lv_render(int16_t *dst, unsigned frames, int16_t amplitude)
+{
+    uint32_t t0 = spk_lv_t0, t1 = x86_pit_ticks();
+    uint32_t span = t1 - t0;
+    uint32_t lvl = spk_lv_render_level;
+
+    spk_lv_t0 = t1;
+    if (!frames)
+        return;
+    if (span == 0u || span > 1193182u / 4u) {
+        /* No guest time, or a stall: no waveform to rebuild. Settle the
+           level and drop what was queued. */
+        while (spk_lv_head != spk_lv_tail)
+            lvl = spk_lv_buf[spk_lv_head++ & (SPK_LV_RING - 1u)] & 1u;
+        spk_lv_render_level = (uint8_t)lvl;
+        return;
+    }
+    if (spk_lv_head == spk_lv_tail && !lvl)
+        return;                          /* silent and nothing changed */
+
+    uint32_t b0 = 0;                     /* tick offset of this sample's start */
+    for (unsigned i = 0; i < frames; i++) {
+        uint32_t b1 = (uint32_t)(((uint64_t)span * (i + 1u)) / frames);
+        uint32_t acc = 0, at = b0;
+        while (spk_lv_head != spk_lv_tail) {
+            uint32_t e = spk_lv_buf[spk_lv_head & (SPK_LV_RING - 1u)];
+            uint32_t et = ((e >> 1) - t0) & 0x7FFFFFFFu; /* 31-bit stamps: wrap-safe */
+            if (et > span)
+                et = 0;                      /* stamped before t0: now */
+            if (et >= b1)
+                break;
+            if (et > at) {
+                if (lvl) acc += et - at;
+                at = et;
+            }
+            lvl = e & 1u;
+            spk_lv_head++;
+        }
+        if (lvl) acc += b1 - at;
+        if (acc && b1 > b0) {
+            int32_t o = dst[i] + (int32_t)(((int64_t)acc * amplitude) / (int32_t)(b1 - b0));
+            dst[i] = (int16_t)(o > 32767 ? 32767 : o < -32768 ? -32768 : o);
+        }
+        b0 = b1;
+    }
+    spk_lv_render_level = (uint8_t)lvl;
+}
+
 uint32_t (*x86_io_time_ms)(void);
 volatile uint32_t x86_spk_events = 0;
 volatile uint32_t x86_spk_events_dropped = 0;
@@ -902,7 +1001,7 @@ void x86_speaker_render(int16_t *dst, unsigned frames, unsigned sample_rate,
         spk_run(dst + pos, idx - pos, x86_io.spk_render_div,
                 sample_rate, amplitude);
         pos = idx;
-        if (div == X86_SPK_CLICK && nclick < 8u)
+        if (div == X86_SPK_CLICK && nclick < 8u && !spk_lv_buf)
             click_at[nclick++] = (uint16_t)idx;
         x86_io.spk_render_div = div;
     }
@@ -930,6 +1029,9 @@ void x86_speaker_render(int16_t *dst, unsigned frames, unsigned sample_rate,
         }
         x86_io.spk_click_lvl = (int16_t)lvl;
     }
+    /* The data bit with the gate off, as a level (spk_lv_render). */
+    if (spk_lv_buf)
+        spk_lv_render(dst, frames, amplitude);
 }
 
 /* ---------------------------------------------------------------------------
@@ -2864,6 +2966,7 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
         x86_io.port61 = (uint8_t)value;
         pit_ch2_gate(value & 1u);    /* bit 0 IS channel 2's gate */
         spk_event(port, value);
+        spk_lv_put((uint8_t)value);
         break;
     case 0x20:
         /* OCW3: bit 3 set with bit 4 clear selects which register the NEXT read
