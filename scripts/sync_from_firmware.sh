@@ -74,16 +74,29 @@ done
 
 cp "$FW/ld/gnw_ram_emu.ld" "$ROOT/sdk/ld/gnw_ram_emu.ld"
 cp "$FW/ld/gnw_itcm_core.ld" "$ROOT/sdk/ld/gnw_itcm_core.ld"
-cp "$FW/ld/gnw_ahb_core.ld" "$ROOT/sdk/ld/gnw_ahb_core.ld"
+cp "$FW/ld/gnw_ram_uc_core.ld" "$ROOT/sdk/ld/gnw_ram_uc_core.ld"
+# gnw_ahb_core.ld left the firmware (sylverb b6b570c): only kept while a firmware still has it
+if [[ -f "$FW/ld/gnw_ahb_core.ld" ]]; then
+  cp "$FW/ld/gnw_ahb_core.ld" "$ROOT/sdk/ld/gnw_ahb_core.ld"
+else
+  rm -f "$ROOT/sdk/ld/gnw_ahb_core.ld"
+fi
 cp "$FW/tools/pack_core.py" "$ROOT/sdk/tools/pack_core.py"
 cp "$FW/tools/pack_homebrew.py" "$ROOT/sdk/tools/pack_homebrew.py"
 
 ABI_VER=$(grep -E '#define\s+GW_FIRMWARE_ABI_VERSION' \
   "$INC_ROOT/Core/Inc/retro-go/gw_firmware_abi.h" | awk '{print $3}' | tr -d 'u')
+# where the snapshot came from: remote, branch and commit when FW is a git checkout
+SRC="$FW"
+if git -C "$FW" rev-parse --git-dir >/dev/null 2>&1; then
+  URL=$(git -C "$FW" remote get-url origin 2>/dev/null | sed -E 's#^https://github.com/##; s#^git@github.com:##; s#\.git$##')
+  BR=$(git -C "$FW" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  SRC="${URL:-$FW}, branch ${BR}, commit $(git -C "$FW" rev-parse --short=8 HEAD)"
+fi
 cat > "$ROOT/SDK_VERSION" << META
 # Snapshot metadata for this SDK tree (informational).
 FIRMWARE_ABI_VERSION=$ABI_VER
-SOURCE=$FW
+SOURCE=$SRC
 SYNC_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 META
 

@@ -681,6 +681,16 @@ typedef struct {
         const char *file_path, uint32_t *file_size_p, bool byte_swap,
         gw_flash_relocate_cb_t relocate_cb);
 
+    /* ================================================================
+     * v2 append: file-manager helpers (rename/move without copying, free
+     * space). NULL / absent on older firmware — check `size` before use.
+     * rg_storage_rename() REPLACES an existing destination: callers that
+     * must not overwrite have to check with rg_storage_exists() first.
+     * ================================================================ */
+    bool     (*rg_storage_rename)(const char *old_path, const char *new_path);
+    bool     (*rg_storage_free_space)(const char *path, uint64_t *free_bytes,
+                                      uint64_t *total_bytes);
+
 } gw_firmware_abi_t;
 
 /* The firmware publishes this instance at GW_FIRMWARE_ABI_ADDRESS via the
