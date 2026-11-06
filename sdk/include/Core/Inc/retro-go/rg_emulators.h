@@ -58,6 +58,9 @@ typedef struct {
     flash_cache_state_t flash_cached;
     rom_region_t region;
     const rom_system_t *system;
+    /* From GWHB_FLAG_NO_SAVESTATES (homebrew only). When set, launcher and
+     * in-game menus omit Resume / Save / Reload / Delete-save. */
+    bool no_savestates;
 #if CHEAT_CODES == 1
     char** cheat_codes; // Cheat codes to choose from
     char** cheat_descs; // Cheat codes descriptions
@@ -96,8 +99,9 @@ typedef struct {
     char core_path[64];
 
     /* GNW_PARSE_ROM (plain per-file browse, scan_folder_cb) or
-     * GNW_PARSE_CDROM (.cue-based folder scan, emulator_scan_cdrom_folder)
-     * — see gnw_parse_type_t. Always GNW_PARSE_ROM for compile-time tabs. */
+     * GNW_PARSE_CDROM (.cue folder collapse + loose files matching exts,
+     * emulator_scan_cdrom_folder) — see gnw_parse_type_t. Always
+     * GNW_PARSE_ROM for compile-time tabs. */
     uint32_t parse_type;
 
 #if CHEAT_CODES == 1

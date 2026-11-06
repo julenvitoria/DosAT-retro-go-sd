@@ -1842,7 +1842,12 @@ mdir -i build/sd-menu.img@@1M -/ :: | grep -i config
 ### Vendored
 
 `make_sdcard_image.py` (partitioned SD image), `sync_from_firmware.sh`
-(re-vendor `sdk/` from a firmware checkout, then update `SDK_VERSION`).
+(re-vendor `sdk/` from a firmware checkout and write `SDK_VERSION`, with the
+checkout's remote, branch and commit). Sync from **sylverb's `external_cores`**,
+not a fork that may carry unmerged work; it needs that checkout's FatFs submodule
+and ST drivers (`make download_sdk` there). The ST `Drivers/` headers are not
+sylverb's code: keep the committed ones (`git checkout -- sdk/include/Drivers`)
+unless the drivers themselves are being updated.
 
 **Re-vendoring is not done until it is COMMITTED.** Agent worktrees share
 `.git` but have their own working trees, so an uncommitted `sdk/include/`
