@@ -168,6 +168,8 @@ static uint8_t *donated_base;
 static uint32_t donated_frames;
 static uint32_t donated_lo;      /* its first frame index, kept for the return */
 static uint32_t donate_reserve = X86_PG_DONATE_RESERVE;
+static uint32_t donate_pinned;      /* x86_pager_set_donate_pinned() */
+static uint32_t pol_floor;          /* defined with the policy, below */
 
 #define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004)
 
@@ -785,6 +787,14 @@ uint32_t x86_pager_donate_to_arena(uint32_t bytes)
         /* The reserve is the POLICY's, which with the policy off is the static
            constant this used to read directly. One call, at a mode set. */
         uint32_t reserve = x86_pager_policy_reserve();
+        /* A card the title's .cfg ASKED for (`[video] vga_pages`) is the
+           user choosing the picture over the frames. Dark Forces' working
+           set is the whole pool (reserve_eff == frames_total), so the
+           measured reserve refused its pages outright and its Mode X intro
+           drew four pages into one: the smear. Pinned, only the hard floor
+           holds. */
+        if (donate_pinned && reserve > pol_floor)
+            reserve = pol_floor;
         if (!n || live < reserve || n > live - reserve)
             goto refuse;
 
@@ -987,6 +997,8 @@ static uint32_t pol_quiet;
    x86_pager_set_donate_reserve() exists: the tier-1 harness runs an 8-frame
    pool and must state its own arithmetic instead of the shipping part's. */
 static uint32_t pol_floor  = X86_PG_RESERVE_FLOOR;
+
+void x86_pager_set_donate_pinned(int on) { donate_pinned = on ? 1u : 0u; }
 static uint32_t pol_margin = X86_PG_RESERVE_MARGIN;
 static uint32_t pol_quiet_n = X86_PG_POLICY_QUIET;
 

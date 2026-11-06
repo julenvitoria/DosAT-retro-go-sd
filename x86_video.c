@@ -1615,9 +1615,12 @@ static void planar_storage_follow(uint8_t kind)
      */
     if (extra
         && !x86_arena_would_fit(X86_ARENA_ID_MODEYP, extra,
-                                X86_MODEY_PAGE_BYTES))
+                                X86_MODEY_PAGE_BYTES)) {
+        x86_pager_set_donate_pinned(x86_video_modey_pages_pinned());
         x86_pager_donate_upto(extra * X86_MODEY_PAGE_BYTES,
                               X86_MODEY_PAGE_BYTES);
+        x86_pager_set_donate_pinned(0);
+    }
     void *pg[3] = { NULL, NULL, NULL };
     if (extra >= 3u
         && x86_arena_claim(X86_ARENA_ID_MODEYP, 3, X86_MODEY_PAGE_BYTES, pg) == 0) {

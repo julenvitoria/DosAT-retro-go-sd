@@ -596,7 +596,7 @@ uint8_t *x86_vga_attr_regs(void) { return vga_regs.attr; }
  * leaves behind: 0x28 (40 words = 80 bytes) for 13h, 0x14 (20 words = 40
  * bytes) for 0Dh, and a display start of zero for both.
  */
-void x86_vga_crtc_preset(uint8_t mode)
+X86_UC_TEXT(x86_vga_crtc_preset) void x86_vga_crtc_preset(uint8_t mode)
 {
     vga_regs.crtc[0x0C] = 0;
     vga_regs.crtc[0x0D] = 0;
@@ -618,6 +618,46 @@ void x86_vga_crtc_preset(uint8_t mode)
     for (unsigned i = 0; i < 16; i++)
         vga_regs.attr[i] = (uint8_t)i;
     vga_regs.attr[0x13] = 0;            /* no pel panning until asked */
+
+    /* THE REST OF WHAT A VGA BIOS LEAVES, BECAUSE TITLES READ IT BACK. The
+       usual way to enter Mode X is read-modify-write: Sequencer 4 &= ~8,
+       CRTC 0x14 &= ~0x40, CRTC 0x17 |= 0x40, GC 5 &= ~0x10, GC 6 &= ~2. With
+       these registers reading 0, the read-modify-write produced values a VGA
+       never holds -- and Dark Forces, whose code ORs bits into Sequencer 4
+       and leaves the rest, read 0, wrote 0x04, and so UNCHAINED mode 13h
+       while it went on drawing a chained, linear frame: every byte landed in
+       all four planes and the intro came out smeared sideways (owner's
+       video, 2026-11-06). Values from the IBM VGA BIOS parameter tables. */
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq13[5] = { 0x03, 0x01, 0x0F, 0x00, 0x0E };
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gc13[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF };
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq16[5] = { 0x03, 0x09, 0x0F, 0x00, 0x06 };   /* 0Dh */
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gc16[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x0F, 0xFF };
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seqtx[5] = { 0x03, 0x00, 0x03, 0x00, 0x02 };   /* text */
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gctx[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x0E, 0x00, 0xFF };
+    const uint8_t *sq, *g;
+    uint8_t amode, c14, c17;
+    if (mode == 0x13) {
+        sq = seq13; g = gc13; amode = 0x41; c14 = 0x40; c17 = 0xA3;
+    } else if (mode == 0x0D || mode == 0x0E || mode == 0x10 || mode == 0x12) {
+        sq = seq16; g = gc16; amode = 0x01; c14 = 0x00; c17 = 0xE3;
+        if (mode != 0x0D) { /* 640-wide modes: 8-dot clock, no halving */
+            static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq16w[5] = { 0x03, 0x01, 0x0F, 0x00, 0x06 };
+            sq = seq16w;
+        }
+    } else if (mode <= 0x03 || mode == 0x07) {
+        sq = seqtx; g = gctx; amode = (mode == 0x07) ? 0x0E : 0x0C;
+        c14 = 0x1F; c17 = 0xA3;
+    } else {
+        return;                         /* CGA graphics: leave as it was */
+    }
+    for (unsigned i = 0; i < 5; i++)
+        vga_regs.seq[i] = sq[i];
+    for (unsigned i = 0; i < 9; i++)
+        vga_regs.gc[i] = g[i];
+    vga_regs.attr[0x10] = amode;
+    vga_regs.attr[0x12] = 0x0F;
+    vga_regs.crtc[0x14] = c14;
+    vga_regs.crtc[0x17] = c17;
 }
 
 /*
