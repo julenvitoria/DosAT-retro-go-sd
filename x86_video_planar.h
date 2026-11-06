@@ -59,6 +59,8 @@ void x86_vga_planar_gc_write(unsigned idx, uint8_t val);
 /* CRTC display start (index 0x0C/0x0D) has been reprogrammed. Feeds the Mode Y
    stride learning and, on a real change, the present-on-page-flip edge. */
 void x86_vga_planar_start_write(void);
+void x86_vga_planar_start_hi(void);     /* CRTC 0x0C: held for the low byte */
+void x86_vga_planar_start_flush(void);  /* frame top: settle a held 0x0C   */
 
 /* ---- arming -------------------------------------------------------------- */
 
