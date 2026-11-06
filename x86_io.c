@@ -1140,6 +1140,18 @@ int x86_kbd_raise_irq(X86CPUState *cpu)
             return 0;
         pic_isr &= (uint8_t)~0x02u;
     }
+    /* NOT WHILE THE TIMER IS IN SERVICE EITHER. The 8259 is fully nested: IRQ 1
+       waits for IRQ 0's EOI. Delivered INSIDE a timer handler that had
+       re-enabled IF (Epic Pinball's does), the keyboard's handler then sent
+       the first EOI -- which, non-specific, cleared the TIMER's bit -- and
+       left IRQ 1 in service until the 400-try fallback above: a flipper
+       break code 2.5 s late, the "stays up" flipper (owner, 2026-11-06,
+       measured under gwemu: pic_isr 0x03 at the delivery). Same bound, so a
+       timer handler that never EOIs costs a stall and not a dead keyboard. */
+    if (pic_isr & 0x01u) {
+        if (++kbd_isr_stuck < 400u)
+            return 0;
+    }
     if (cpu->hard_int_pending)
         return 0;
     kbd_isr_stuck = 0;
@@ -1597,6 +1609,7 @@ static struct {
 } sbp = { .dma8 = 1, .dma16 = 5 };
 
 static uint8_t sb_irq_line;       /* the DSP's interrupt output            */
+static uint16_t sb_isr_wait;      /* raises held off by a higher level in service */
 static uint8_t sb_wstat_reads;    /* 0x22C reads: drives the busy bit      */
 static uint8_t sb_irq_kind;       /* mixer 0x82: b0 = 8-bit, b1 = 16-bit   */
 
@@ -1629,6 +1642,17 @@ int x86_sb_raise_irq(X86CPUState *cpu)
         return 0;
     if (pic_isr & 0x20u)
         return 0;                     /* still in service: not acked yet    */
+    /* Fully nested, as for the keyboard: IRQ 5 waits for any of 0..4 in
+       service. Delivered inside a timer or keyboard handler, the SB handler's
+       non-specific EOI cleared THAT level and left 5 in service for good --
+       no SB interrupt ever again, so a driver that waits for the end of its
+       block never starts another (Prince of Persia: no more footsteps after
+       a collision, owner 2026-11-06). Bounded like the keyboard's. */
+    if (pic_isr & 0x1Fu) {
+        if (++sb_isr_wait < 2000u)
+            return 0;
+    }
+    sb_isr_wait = 0;
     if (pic_imr & 0x20u) {
         x86_sb_irqs_masked++;
         return 0;
@@ -3007,8 +3031,28 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
         } else if (value & 0x20u) {
             if ((value & 0xF8u) == 0x60u)
                 pic_isr &= (uint8_t)~(1u << (value & 7u));   /* specific */
-            else
-                pic_isr &= (uint8_t)(pic_isr - 1u);  /* highest priority only */
+            else {
+                /* Highest priority only -- among the levels the CPU has
+                   actually TAKEN. A level is marked in service when it is
+                   ARMED into the one-deep slot, i.e. before the CPU accepts
+                   it; on the chip the bit is set at INTA. So a tick armed
+                   while a keyboard or SB handler runs with IF clear was
+                   "in service" before that handler's EOI, which then
+                   cleared the TIMER's bit and left its own set for good:
+                   no IRQ 5 ever again (Prince of Persia's footsteps gone
+                   after a collision; any later sound only once) and IRQ 1
+                   held for the 400-try fallback (Epic Pinball's flipper
+                   break 2.5 s late). Measured under gwemu, 2026-11-06:
+                   KBD armed isr=02, TMR armed isr=03, guest OUT 20h. */
+                uint8_t eff = pic_isr;
+                switch (cpu_state_ptr->hard_int_pending) {
+                case 0x08u: eff &= (uint8_t)~0x01u; break;
+                case 0x09u: eff &= (uint8_t)~0x02u; break;
+                case 0x0Du: eff &= (uint8_t)~0x20u; break;
+                default: break;
+                }
+                pic_isr &= (uint8_t)~(eff & (uint8_t)(0u - eff));
+            }
             x86_sb_eois++;
         }
         break;
