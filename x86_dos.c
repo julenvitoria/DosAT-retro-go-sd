@@ -599,9 +599,14 @@ static void dos_path_from_guest(uint32_t lin, char *out, unsigned max)
     }
     unsigned j = 0;
     while (s[j] && i < max - 1) {
-        out[i] = (s[j] == '\\') ? '/' : s[j];
-        i++;
+        char c = (s[j] == '\\') ? '/' : s[j];
         j++;
+        /* "C:\DARK\\LFD": DOS treats a run of separators as one, FatFs
+           does not and fails the lookup (Dark Forces builds its LFD path by
+           appending "\LFD" to a directory that already ends in '\'). */
+        if (c == '/' && i && out[i - 1] == '/')
+            continue;
+        out[i++] = c;
     }
     out[i] = 0;
 }
@@ -1520,8 +1525,13 @@ static uint16_t dos_env_build(const char *path, uint16_t owner)
     env[n++] = 0;                       /* end of the strings */
     env[n++] = 1; env[n++] = 0;         /* one trailing item follows */
     env[n++] = 'C'; env[n++] = ':'; env[n++] = '\\';
+    /* `path` is a FatFs path, with '/' separators. The program's own path is
+       DOS's and must say '\': a title that finds its home directory by
+       cutting argv[0] at the last backslash got "C:\" out of "C:\DARK/DARK.EXE"
+       and looked for LOCAL.MSG in the root (Dark Forces: "Unable to load
+       LOCAL.MSG", 2026-11-06). */
     for (unsigned i = 0; path[i] && n < sizeof(env) - 1; i++)
-        env[n++] = (uint8_t)dos_up(path[i]);
+        env[n++] = (uint8_t)(path[i] == '/' ? '\\' : dos_up(path[i]));
     env[n++] = 0;
 
     uint16_t largest = 0;
@@ -2852,14 +2862,22 @@ static int dos_int21_dispatch(uint8_t func)
         dos_log_path(path);
         strncpy(x86_dos_last_path, path, sizeof(x86_dos_last_path) - 1);
 
-        /* Split the directory off the pattern. One volume, root only. */
+        /* Split the directory off the pattern and search THAT directory. It
+           used to be the root whatever the path said, so "C:\\DARK\\*.*"
+           listed the root and "C:\\DARK\\LFD" was never found -- Dark Forces
+           looks its LFD directory up that way (2026-11-06). */
         char *stem = path;
         for (char *q = path; *q; q++)
             if (*q == '\\' || *q == '/')
                 stem = q + 1;
+        char dir[64];
+        unsigned dl = (unsigned)(stem - path);
+        if (dl) dl--;                           /* drop the separator */
+        memcpy(dir, path, dl);
+        dir[dl] = 0;
 
         if (dos_find_open) { f_closedir(&dos_find_dir); dos_find_open = 0; }
-        if (f_opendir(&dos_find_dir, "") != FR_OK) { fail(0x03); return 1; }
+        if (f_opendir(&dos_find_dir, dir) != FR_OK) { fail(0x03); return 1; }
         dos_find_open = 1;
         dos_find_serial++;
         dos_find_attr = (uint8_t)(cx & (AM_HID | AM_SYS | AM_DIR));

@@ -3567,13 +3567,18 @@ L(GRP3_F7_DIV):
     LDRH.W R0, [R8, #REG_EDX]
     ORR.W R4, R4, R0, LSL #16      @ DX:AX
 #else
-    LDR.W R4, [R8, #REG_EAX]       @ 64-bit DIV is not modelled; EDX must be 0
+    LDR.W R4, [R8, #REG_EAX]
     LDR.W R0, [R8, #REG_EDX]
-    CMP R0, #0
-    BNE.W L(DIVIDE_ERROR)
 #endif
     CMP R3, #0
     BEQ.W L(DIVIDE_ERROR)
+#if !NSH
+    /* EDX:EAX is a 64-bit dividend. UDIV covers EDX = 0; anything else goes
+       to C (the M7 has no 64/32 divide). This used to raise #DE for every
+       EDX != 0, which a quotient that fits does not deserve. */
+    CMP R0, #0
+    BNE.W L(F7_DIV64)
+#endif
     UDIV R5, R4, R3
     MLS R12, R5, R3, R4
 #if NSH
@@ -3595,9 +3600,20 @@ L(GRP3_F7_IDIV):
     SXTH R3, R3
 #else
     LDR.W R4, [R8, #REG_EAX]
+    LDR.W R0, [R8, #REG_EDX]
 #endif
     CMP R3, #0
     BEQ.W L(DIVIDE_ERROR)
+#if !NSH
+    /* EDX was IGNORED: the dividend was taken as EAX alone, so any EDX that
+       is not EAX's sign extension gave a wrong quotient with no fault --
+       Dark Forces' view setup computes (320 << 32) / (320 << 16) with
+       CDQ/SHLD and got 0, then divided by it ("DOS/4GW error (2001):
+       exception 00h", owner's device, 2026-11-06). SDIV covers the
+       sign-extended case; the rest goes to C. */
+    CMP R0, R4, ASR #31
+    BNE.W L(F7_IDIV64)
+#endif
     SDIV R5, R4, R3
     MLS R12, R5, R3, R4
 #if NSH
@@ -3611,6 +3627,25 @@ L(GRP3_F7_IDIV):
     STR.W R12, [R8, #REG_EDX]
 #endif
     B.W .fetch_decode_loop
+
+#if !NSH
+/* 64/32 division, out of line: x86_div64(lo, hi, divisor, signed) stores
+   EAX/EDX itself and returns non-zero for #DE (quotient overflow). Every
+   path leaves to the fetch loop or the fault, so LR is free. */
+L(F7_DIV64):
+    MOV.W R12, #0
+    B.N 1f
+L(F7_IDIV64):
+    MOV.W R12, #1
+1:  MOV R1, R0                     @ hi = EDX
+    MOV R0, R4                     @ lo = EAX
+    MOV R2, R3                     @ divisor
+    MOV R3, R12                    @ signed?
+    BL x86_div64
+    CMP R0, #0
+    BNE.W L(DIVIDE_ERROR)
+    B.W .fetch_decode_loop
+#endif
 
 #include "cpu_exec_handlers_0f.S"
 

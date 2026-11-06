@@ -3800,6 +3800,40 @@ def run_test(args):
 
             # ---- 0F A4/A5 SHLD, 0F AC/AD SHRD ------------------------------
             {
+                "name": "DIV r32 with EDX != 0 divides EDX:EAX",
+                # DIV ECX ; HLT -- 0x5_00000003 / 0x10 = 0x50000000 r 3
+                "code": bytes([0xF7, 0xF1, 0xF4]),
+                "regs_initial": {0: 0x00000003, 1: 0x10, 2: 0x5},
+                "regs_expected": {0: 0x50000000, 2: 0x3},
+                "expected_eip": 3,
+            },
+            {
+                "name": "IDIV r32 with a negative 64-bit dividend",
+                # IDIV ECX ; HLT -- -0x1_00000000 / 0x100 = -0x1000000 r 0
+                "code": bytes([0xF7, 0xF9, 0xF4]),
+                "regs_initial": {0: 0x00000000, 1: 0x100, 2: 0xFFFFFFFF},
+                "regs_expected": {0: 0xFF000000, 2: 0x0},
+                "expected_eip": 3,
+            },
+            {
+                # Dark Forces' view setup (DARK.EXE 1:0004046C): width 320 as
+                # 16.16 over 320.0 -- EDX:EAX = 0x140 << 32, IDIV by 0x1400000
+                # must give 0x10000. It gave 0, and the next call divided by
+                # it: "DOS/4GW error (2001): exception 00h" on the device.
+                "name": "CDQ/SHLD/SHL then IDIV r32 with a 64-bit dividend",
+                "code": bytes([0xB8, 0x40, 0x01, 0x00, 0x00,   # mov eax,0x140
+                               0xC1, 0xE0, 0x10,               # shl eax,16
+                               0x99,                           # cdq
+                               0x0F, 0xA4, 0xC2, 0x10,         # shld edx,eax,16
+                               0xC1, 0xE0, 0x10,               # shl eax,16
+                               0xB9, 0x00, 0x00, 0x40, 0x01,   # mov ecx,0x1400000
+                               0xF7, 0xF9,                     # idiv ecx
+                               0xF4]),
+                "regs_initial": {},
+                "regs_expected": {0: 0x10000, 2: 0, 1: 0x1400000},
+                "expected_eip": 24,
+            },
+            {
                 "name": "SHLD Ev,Gv,imm8 (0F A4): the shifted-in bits come from Gv",
                 # SHLD EAX,EBX,4 ; HLT
                 "code": bytes([0x0F, 0xA4, 0xD8, 0x04, 0xF4]),
