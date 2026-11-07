@@ -464,8 +464,18 @@ static void io_log(unsigned dir, uint32_t port, uint32_t value)
 /* The 0x3DA beam, in 1.193182 MHz PIT ticks: a 70 Hz frame, a 31.47 kHz line,
    vertical retrace over the last sixteenth of the frame (~0.9 ms) and the
    horizontal blank over the last ~5 us of each line. */
-#define VGA_FRAME_TICKS     17045u
+#define VGA_FRAME_TICKS_70  17045u
+/* The frame, settable per title (`[video] vga_hz`, x86_vga_set_hz). */
+static uint32_t vga_frame_ticks = VGA_FRAME_TICKS_70;
+#define VGA_FRAME_TICKS     vga_frame_ticks
 #define VGA_VRETRACE_TICKS  (VGA_FRAME_TICKS / 16u)
+
+X86_UC_TEXT(x86_vga_set_hz) void x86_vga_set_hz(unsigned hz)
+{
+    if (hz < 50u || hz > 75u)
+        hz = 70u;
+    vga_frame_ticks = hz == 70u ? VGA_FRAME_TICKS_70 : 1193182u / hz;
+}
 #define VGA_LINE_TICKS      38u
 #define VGA_HBLANK_TICKS    6u
 #define VGA_CRTC_REGS  32

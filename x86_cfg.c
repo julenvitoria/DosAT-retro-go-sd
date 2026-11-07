@@ -136,6 +136,8 @@ static const x86_cfg_key_t x86_cfg_keys[] = {
      * has nothing like it because its card always has 256 KB; here the card is
      * built from whatever memory the guest can spare. See x86_settings.h. */
     { "vga_pages",    "video",    X86_SET_VGA_PAGES, X86_CFG_T_INT     },
+    /* The emulated retrace rate (x86_settings.h, X86_SET_VGA_HZ). */
+    { "vga_hz",       "video",    X86_SET_VGA_HZ,    X86_CFG_T_INT     },
 
     /* ---- launch parameters, written out ------------------------------------
      *
