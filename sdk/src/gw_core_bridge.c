@@ -1431,3 +1431,22 @@ const char *core_rg_dirname(const char *path)
 {
     return gw_firmware_abi()->rg_dirname(path);
 }
+
+/* File-manager helpers (appended to the ABI after the v2 cancellable-cache block).
+ * Older firmware ends its table before them, and whatever follows the table in flash is
+ * not guaranteed to be NULL, so check `size` before reading the slot. */
+#define CORE_ABI_HAS(field) \
+    (gw_firmware_abi()->size >= offsetof(gw_firmware_abi_t, field) + sizeof(void *) && \
+     gw_firmware_abi()->field != NULL)
+bool core_rg_storage_rename(const char *old_path, const char *new_path)
+{
+    if (!CORE_ABI_HAS(rg_storage_rename))
+        return false;
+    return gw_firmware_abi()->rg_storage_rename(old_path, new_path);
+}
+bool core_rg_storage_free_space(const char *path, uint64_t *free_bytes, uint64_t *total_bytes)
+{
+    if (!CORE_ABI_HAS(rg_storage_free_space))
+        return false;
+    return gw_firmware_abi()->rg_storage_free_space(path, free_bytes, total_bytes);
+}
