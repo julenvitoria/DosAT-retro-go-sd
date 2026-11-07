@@ -638,6 +638,9 @@ X86_UC_TEXT(x86_vga_crtc_preset) void x86_vga_crtc_preset(uint8_t mode)
        while it went on drawing a chained, linear frame: every byte landed in
        all four planes and the intro came out smeared sideways (owner's
        video, 2026-11-06). Values from the IBM VGA BIOS parameter tables. */
+#ifdef X86_NO_VGA_BIOS_PRESET
+    return;
+#endif
     static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq13[5] = { 0x03, 0x01, 0x0F, 0x00, 0x0E };
     static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gc13[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF };
     static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq16[5] = { 0x03, 0x09, 0x0F, 0x00, 0x06 };   /* 0Dh */
