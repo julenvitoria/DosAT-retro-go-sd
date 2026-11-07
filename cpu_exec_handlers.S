@@ -219,13 +219,23 @@
         ADD.W \out, \out, \tmp
     .endm
 
+    /* At address size 16 only SI/DI move: the high half of ESI/EDI is NOT
+       part of the index and must survive. The old UXTH + full store zeroed
+       it, and DOS/4GW runs its real-mode reflection code (16-bit `rep movsw`
+       and friends at 04C0:0C24) with the interrupted 32-bit program's ESI/EDI
+       still live -- so every reflected IRQ that landed inside a 32-bit REP
+       turned EDI 0x008B4500 into 0x00004500, and Doom's startup memset of its
+       BSS zeroed linear 0x4500..0x5500 instead: DOS/4GW's own real-mode
+       kernel, then a wild IRET a tick later (owner's Doom / Dark Forces, both
+       stuck on the DOS/4GW banner, 2026-11-06). A STRH writes exactly SI/DI,
+       and wraps them for free. */
     .macro STR_ADV off, delta, tmp
         LDR.W \tmp, [R8, #\off]
         ADD.W \tmp, \tmp, \delta
         TST.W R2, #ADDRSIZE_XOR
-        IT EQ
-        UXTHEQ \tmp, \tmp            @ SI/DI wrap at the address size
-        STR.W \tmp, [R8, #\off]
+        ITE EQ
+        STRHEQ.W \tmp, [R8, #\off]  @ SI/DI wrap at the address size
+        STRNE.W \tmp, [R8, #\off]
     .endm
 
     /* A `moffs` is an OFFSET in DS (or an override), taken at the ADDRESS
@@ -3209,6 +3219,16 @@ OP_AGNOSTIC .op_sti_FB
     CMP R2, R3
     BHI.W .raise_gp_fault
 L(OP_STI_FB_OK):
+    /* THE STI SHADOW. Like a load of SS, STI holds interrupts off until the
+       instruction after it has run, so `STI / IRETD` and `STI / HLT` cannot be
+       split. DOS/16M's IRQ-reflection exit is `sti / pop ds / pop es ...`;
+       taking the next IRQ before its first pop re-enters the reflection on a
+       frame that is still live. Same deferral as the SS arm of SET_SREG. */
+    LDR.W R12, [R8, #CPU_PIT_COUNTER]
+    CMP.W R12, #1
+    IT EQ
+    MOVEQ.W R12, #2
+    STR.W R12, [R8, #CPU_PIT_COUNTER]
     ORR.W R11, R11, #512
     B.W .fetch_decode_loop
 
@@ -3557,13 +3577,18 @@ L(GRP3_F7_DIV):
     LDRH.W R0, [R8, #REG_EDX]
     ORR.W R4, R4, R0, LSL #16      @ DX:AX
 #else
-    LDR.W R4, [R8, #REG_EAX]       @ 64-bit DIV is not modelled; EDX must be 0
+    LDR.W R4, [R8, #REG_EAX]
     LDR.W R0, [R8, #REG_EDX]
-    CMP R0, #0
-    BNE.W L(DIVIDE_ERROR)
 #endif
     CMP R3, #0
     BEQ.W L(DIVIDE_ERROR)
+#if !NSH
+    /* EDX:EAX is a 64-bit dividend. UDIV covers EDX = 0; anything else goes
+       to C (the M7 has no 64/32 divide). This used to raise #DE for every
+       EDX != 0, which a quotient that fits does not deserve. */
+    CMP R0, #0
+    BNE.W L(F7_DIV64)
+#endif
     UDIV R5, R4, R3
     MLS R12, R5, R3, R4
 #if NSH
@@ -3585,9 +3610,20 @@ L(GRP3_F7_IDIV):
     SXTH R3, R3
 #else
     LDR.W R4, [R8, #REG_EAX]
+    LDR.W R0, [R8, #REG_EDX]
 #endif
     CMP R3, #0
     BEQ.W L(DIVIDE_ERROR)
+#if !NSH
+    /* EDX was IGNORED: the dividend was taken as EAX alone, so any EDX that
+       is not EAX's sign extension gave a wrong quotient with no fault --
+       Dark Forces' view setup computes (320 << 32) / (320 << 16) with
+       CDQ/SHLD and got 0, then divided by it ("DOS/4GW error (2001):
+       exception 00h", owner's device, 2026-11-06). SDIV covers the
+       sign-extended case; the rest goes to C. */
+    CMP R0, R4, ASR #31
+    BNE.W L(F7_IDIV64)
+#endif
     SDIV R5, R4, R3
     MLS R12, R5, R3, R4
 #if NSH
@@ -3601,6 +3637,25 @@ L(GRP3_F7_IDIV):
     STR.W R12, [R8, #REG_EDX]
 #endif
     B.W .fetch_decode_loop
+
+#if !NSH
+/* 64/32 division, out of line: x86_div64(lo, hi, divisor, signed) stores
+   EAX/EDX itself and returns non-zero for #DE (quotient overflow). Every
+   path leaves to the fetch loop or the fault, so LR is free. */
+L(F7_DIV64):
+    MOV.W R12, #0
+    B.N 1f
+L(F7_IDIV64):
+    MOV.W R12, #1
+1:  MOV R1, R0                     @ hi = EDX
+    MOV R0, R4                     @ lo = EAX
+    MOV R2, R3                     @ divisor
+    MOV R3, R12                    @ signed?
+    BL x86_div64
+    CMP R0, #0
+    BNE.W L(DIVIDE_ERROR)
+    B.W .fetch_decode_loop
+#endif
 
 #include "cpu_exec_handlers_0f.S"
 
@@ -3778,7 +3833,18 @@ L(SET_SREG_PMODE):
     UXTH R2, R5
     BL x86_pmode_load_seg
     CBNZ R0, 1f
-    POP {R0-R3, R12, PC}
+    /* THE SS INTERRUPT SHADOW, protected-mode arm -- the real-mode arm above
+       had it and this one did not. DOS/4GW's mode-switch and IRQ-reflection
+       paths load SS and then ESP without a CLI; an IRQ between the two pushes
+       its frame on the new SS at the old ESP. Same one-instruction deferral. */
+    CMP.W R4, #2
+    BNE.N 2f
+    LDR.W R12, [R8, #CPU_PIT_COUNTER]
+    CMP.W R12, #1
+    IT EQ
+    MOVEQ.W R12, #2
+    STR.W R12, [R8, #CPU_PIT_COUNTER]
+2:  POP {R0-R3, R12, PC}
 1:  POP {R0-R3, R12, LR}
     MOV.W R0, #X86_EXIT_GPF
     STR.W R0, [R8, #CPU_EXIT_REASON]

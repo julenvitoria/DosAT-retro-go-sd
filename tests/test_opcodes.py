@@ -803,6 +803,33 @@ def run_test(args):
                 "mem_expected": [(0x2000, bytes([0xAA, 0xBB, 0xCC]))],
             },
             {
+                # ...and the same for the INDEX registers. At address size 16
+                # only SI/DI move; ESI/EDI[31:16] belong to whoever owns the
+                # 32-bit value. STR_ADV truncated and stored all 32 bits, so a
+                # DOS/4GW reflection running `rep movsw` in real mode zeroed
+                # the high half of the interrupted program's EDI: Doom's BSS
+                # memset then cleared 0x4500.. instead of 0x8B4500.., i.e.
+                # DOS/4GW's own real-mode kernel (docs/13, Doom).
+                "name": "REP MOVSB (16-bit) preserves the high half of ESI/EDI",
+                "mode": 16,
+                "code": bytes([0xF3, 0xA4, 0xF4]),
+                "regs_initial": {1: 3, 6: 0x00911000, 7: 0x008B2000},
+                "regs_expected": {1: 0, 6: 0x00911003, 7: 0x008B2003},
+                "expected_eip": 3,
+                "ram_setup": [(0x1000, bytes([0xAA, 0xBB, 0xCC]))],
+                "mem_expected": [(0x2000, bytes([0xAA, 0xBB, 0xCC]))],
+            },
+            {
+                "name": "STOSW (16-bit) leaves EDI[31:16] alone",
+                "code": bytes([0xAB, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"ES": 0x2000},
+                "regs_initial": {0: 0x1234, 7: 0x00910040},
+                "regs_expected": {7: 0x00910042},
+                "mem_expected": [(0x2040, bytes([0x34, 0x12]))],
+                "expected_eip": 2,
+            },
+            {
                 "name": "Grp3 F7 MUL EBX",
                 # F7 E3 -> MUL EBX (Reg=4, R/M=3 -> Mod=11, Reg=100, R/M=011 -> 11 100 011 = 0xE3)
                 "code": bytes([0xF7, 0xE3, 0xF4]), 
@@ -3772,6 +3799,40 @@ def run_test(args):
             },
 
             # ---- 0F A4/A5 SHLD, 0F AC/AD SHRD ------------------------------
+            {
+                "name": "DIV r32 with EDX != 0 divides EDX:EAX",
+                # DIV ECX ; HLT -- 0x5_00000003 / 0x10 = 0x50000000 r 3
+                "code": bytes([0xF7, 0xF1, 0xF4]),
+                "regs_initial": {0: 0x00000003, 1: 0x10, 2: 0x5},
+                "regs_expected": {0: 0x50000000, 2: 0x3},
+                "expected_eip": 3,
+            },
+            {
+                "name": "IDIV r32 with a negative 64-bit dividend",
+                # IDIV ECX ; HLT -- -0x1_00000000 / 0x100 = -0x1000000 r 0
+                "code": bytes([0xF7, 0xF9, 0xF4]),
+                "regs_initial": {0: 0x00000000, 1: 0x100, 2: 0xFFFFFFFF},
+                "regs_expected": {0: 0xFF000000, 2: 0x0},
+                "expected_eip": 3,
+            },
+            {
+                # Dark Forces' view setup (DARK.EXE 1:0004046C): width 320 as
+                # 16.16 over 320.0 -- EDX:EAX = 0x140 << 32, IDIV by 0x1400000
+                # must give 0x10000. It gave 0, and the next call divided by
+                # it: "DOS/4GW error (2001): exception 00h" on the device.
+                "name": "CDQ/SHLD/SHL then IDIV r32 with a 64-bit dividend",
+                "code": bytes([0xB8, 0x40, 0x01, 0x00, 0x00,   # mov eax,0x140
+                               0xC1, 0xE0, 0x10,               # shl eax,16
+                               0x99,                           # cdq
+                               0x0F, 0xA4, 0xC2, 0x10,         # shld edx,eax,16
+                               0xC1, 0xE0, 0x10,               # shl eax,16
+                               0xB9, 0x00, 0x00, 0x40, 0x01,   # mov ecx,0x1400000
+                               0xF7, 0xF9,                     # idiv ecx
+                               0xF4]),
+                "regs_initial": {},
+                "regs_expected": {0: 0x10000, 2: 0, 1: 0x1400000},
+                "expected_eip": 24,
+            },
             {
                 "name": "SHLD Ev,Gv,imm8 (0F A4): the shifted-in bits come from Gv",
                 # SHLD EAX,EBX,4 ; HLT

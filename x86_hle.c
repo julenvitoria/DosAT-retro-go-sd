@@ -233,7 +233,7 @@ void x86_mouse_events(void)
     x86_pit_counter_forced(1);
 }
 
-int x86_hle_install(const uint8_t *vectors, unsigned count)
+X86_UC_TEXT(x86_hle_install) int x86_hle_install(const uint8_t *vectors, unsigned count)
 {
     uint32_t base = (uint32_t)STUB_SEG << 4;
     uint8_t *stubs;
@@ -269,6 +269,20 @@ int x86_hle_install(const uint8_t *vectors, unsigned count)
         ivt[v * 4 + 1] = (uint8_t)(off >> 8);
         ivt[v * 4 + 2] = (uint8_t)STUB_SEG;
         ivt[v * 4 + 3] = (uint8_t)(STUB_SEG >> 8);
+    }
+
+    /* NO MOUSE MEANS NO DRIVER IN THE VECTOR. With `mouse` off the INT 33h
+       stub returned with the registers untouched, but the vector still
+       pointed at our 0F 0B stub -- and Wolfenstein 3D, like much id-era
+       code, decides a driver is present when the INT 33h vector is non-null
+       and its first byte is not IRET (0xCF). It then polled AX=0003h, got
+       its own stale CX/DX back as a position, and the menu cursor wandered
+       on its own (owner, 2026-11-07). Point the vector at the bare IRET,
+       which is what a machine without a mouse driver looks like.
+       settings_load() has set x86_mouse_enabled by now (main.c). */
+    if (!x86_mouse_enabled) {
+        ivt[0x33 * 4 + 0] = (uint8_t)IRET_OFF;
+        ivt[0x33 * 4 + 1] = (uint8_t)(IRET_OFF >> 8);
     }
 
     /* The XMS control entry. Planted unconditionally: INT 2Fh AX=4310h hands

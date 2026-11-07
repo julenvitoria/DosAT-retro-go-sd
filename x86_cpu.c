@@ -329,3 +329,33 @@ uint32_t x86_eip_log_idx;
 volatile uint32_t x86_x87_escapes = 0;
 
 uint32_t x86_oddsp_log[82];
+
+/*
+ * DIV/IDIV r/m32 with a dividend that does not fit in 32 bits (EDX:EAX).
+ * Called from cpu_exec_handlers.S only when EDX is not the zero/sign
+ * extension of EAX; the common case stays a single UDIV/SDIV. Returns 1 for
+ * #DE: a zero divisor is caught before the call, so that means a quotient
+ * outside 32 bits (unsigned) or outside int32 (signed), as on the 386.
+ */
+int x86_div64(uint32_t lo, uint32_t hi, uint32_t d, uint32_t sgn)
+{
+    if (!sgn) {
+        uint64_t n = ((uint64_t)hi << 32) | lo;
+        uint64_t q = n / d;
+        if (q > 0xFFFFFFFFull)
+            return 1;
+        cpu_state_ptr->regs[0] = (uint32_t)q;
+        cpu_state_ptr->regs[2] = (uint32_t)(n - q * d);
+        return 0;
+    }
+    int64_t n = (int64_t)(((uint64_t)hi << 32) | lo);
+    int64_t dv = (int32_t)d;
+    if (n == INT64_MIN && dv == -1)
+        return 1;
+    int64_t q = n / dv;
+    if (q > INT32_MAX || q < INT32_MIN)
+        return 1;
+    cpu_state_ptr->regs[0] = (uint32_t)(int32_t)q;
+    cpu_state_ptr->regs[2] = (uint32_t)(int32_t)(n - q * dv);
+    return 0;
+}
