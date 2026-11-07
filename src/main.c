@@ -632,6 +632,7 @@ static uint32_t   rate_window_frames;
    60 fps, so every slower frame threw ticks away -- measured as ~351 of 473
    per second, with guest_ticks_dropped climbing ~100/s. 24 covers 473 Hz
    down to 20 fps and 560 Hz down to 24. */
+#define TICK_MIN_INSNS 8000u   /* see the phase plan: no closer ticks than this */
 #define TICK_IRQ_MAX          512u
 #define TICK_STALL_MS        1000u    /* longer than this is a stall, not lag */
 static uint32_t tick_acc;             /* ms * TICK_NUM, below one IRQ 0      */
@@ -5043,8 +5044,17 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
         uint32_t subs, sub_slice, sub_left, phase_tail = 0;
         if (tick_phase_on) {
             uint32_t per = (slice / plan_ms) * plan_div / 1193u;
-            if (!per)
-                per = 1u;
+            /* A FLOOR ON THE TICK SPACING, in guest instructions. per is the
+               frame's budget shared out by wall time, so a frame the host
+               spent paging (or a host as slow as gwemu) packs a 140 Hz clock
+               into a few thousand instructions -- a guest whose timer handler
+               re-enables interrupts and runs services then NESTS in it. DMX
+               under Doom nested four deep and the innermost returned without
+               its EOI (gwemu, 2026-11-07). A machine that slow simply gets
+               fewer ticks: the guest's clock runs slow, which is what a slow
+               386 would have shown it anyway. */
+            if (per < TICK_MIN_INSNS)
+                per = TICK_MIN_INSNS;
             if (x86_pit_ch_mode[0] == 0u)
                 per = 0x7FFFFFFFu;      /* one-shot: nothing after the first */
             uint32_t first = tick_phase_left ? tick_phase_left : 1u;
@@ -5058,6 +5068,17 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
             if (subs > TICK_IRQ_MAX)
                 subs = TICK_IRQ_MAX;
             sub_slice = slice / subs;
+            if (sub_slice < TICK_MIN_INSNS && subs > 1u) {
+                /* Same floor as the phase plan's (TICK_MIN_INSNS). */
+                subs = slice / TICK_MIN_INSNS;
+                if (subs < 1u)
+                    subs = 1u;
+                if (tick_irqs_owed > subs) {
+                    guest_ticks_dropped += tick_irqs_owed - subs;
+                    tick_irqs_owed = subs;
+                }
+                sub_slice = slice / subs;
+            }
             if (sub_slice == 0)
                 sub_slice = slice;
             sub_left = sub_slice;
