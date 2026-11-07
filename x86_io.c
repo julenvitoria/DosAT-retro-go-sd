@@ -641,36 +641,22 @@ X86_UC_TEXT(x86_vga_crtc_preset) void x86_vga_crtc_preset(uint8_t mode)
 #ifdef X86_NO_VGA_BIOS_PRESET
     return;
 #endif
+    /* MODE 13h ONLY. The same preset for 0Dh/10h/12h and text left garbage
+       in Keen 4's letterbox rows on silicon (owner, 2026-11-07; build with
+       X86_NO_VGA_BIOS_PRESET was clean, gwemu clean either way). Only Dark
+       Forces' Mode X entry needed it, and that is a 13h read-modify-write. */
+    if (mode != 0x13)
+        return;
     static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq13[5] = { 0x03, 0x01, 0x0F, 0x00, 0x0E };
     static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gc13[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF };
-    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq16[5] = { 0x03, 0x09, 0x0F, 0x00, 0x06 };   /* 0Dh */
-    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gc16[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x0F, 0xFF };
-    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seqtx[5] = { 0x03, 0x00, 0x03, 0x00, 0x02 };   /* text */
-    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gctx[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x0E, 0x00, 0xFF };
-    const uint8_t *sq, *g;
-    uint8_t amode, c14, c17;
-    if (mode == 0x13) {
-        sq = seq13; g = gc13; amode = 0x41; c14 = 0x40; c17 = 0xA3;
-    } else if (mode == 0x0D || mode == 0x0E || mode == 0x10 || mode == 0x12) {
-        sq = seq16; g = gc16; amode = 0x01; c14 = 0x00; c17 = 0xE3;
-        if (mode != 0x0D) { /* 640-wide modes: 8-dot clock, no halving */
-            static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq16w[5] = { 0x03, 0x01, 0x0F, 0x00, 0x06 };
-            sq = seq16w;
-        }
-    } else if (mode <= 0x03 || mode == 0x07) {
-        sq = seqtx; g = gctx; amode = (mode == 0x07) ? 0x0E : 0x0C;
-        c14 = 0x1F; c17 = 0xA3;
-    } else {
-        return;                         /* CGA graphics: leave as it was */
-    }
     for (unsigned i = 0; i < 5; i++)
-        vga_regs.seq[i] = sq[i];
+        vga_regs.seq[i] = seq13[i];
     for (unsigned i = 0; i < 9; i++)
-        vga_regs.gc[i] = g[i];
-    vga_regs.attr[0x10] = amode;
+        vga_regs.gc[i] = gc13[i];
+    vga_regs.attr[0x10] = 0x41;
     vga_regs.attr[0x12] = 0x0F;
-    vga_regs.crtc[0x14] = c14;
-    vga_regs.crtc[0x17] = c17;
+    vga_regs.crtc[0x14] = 0x40;
+    vga_regs.crtc[0x17] = 0xA3;
 }
 
 /*
