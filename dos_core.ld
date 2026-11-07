@@ -59,12 +59,12 @@ SECTIONS
     . = ALIGN(4);
     /* `.text.__uc.*` (X86_UC_TEXT, x86_cpu.h) is NOT matched here: cold code
        that goes to the RAM_UC segment below, as .bss.__uc.* does. */
-    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o) .text)
-    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o) .text.[!_]*)
-    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o) .text._[!_]*)
-    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o) .text.__[!u]*)
-    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o) .text.__u[!c]*)
-    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o) .rodata*)
+    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .text)
+    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .text.[!_]*)
+    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .text._[!_]*)
+    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .text.__[!u]*)
+    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .text.__u[!c]*)
+    *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .rodata*)
     *(.glue_7)
     *(.glue_7t)
 
@@ -165,6 +165,11 @@ SECTIONS
        [sblaster] .cfg keys in RAM_EMU. */
     *x86_pgfile.o(.text*)
     *x86_pgfile.o(.rodata*)
+    /* The .cfg parser (2026-11-07): run once per launch, before the guest
+       starts. Moved here when `[video] vga_hz` would otherwise have pushed
+       RAM_EMU over a frame boundary. */
+    *x86_cfg.o(.text*)
+    *x86_cfg.o(.rodata*)
     /* Cold functions marked X86_UC_TEXT: rare BIOS/DOS paths. */
     *(.text.__uc.*)
     . = ALIGN(4);

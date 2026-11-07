@@ -47,6 +47,8 @@ uint8_t *x86_vga_attr_regs(void);           /* the same, writable (INT 10h)    *
    not need it; a title that unchains without programming the Offset itself
    does, or it inherits mode 0Dh's 20 and renders at half the stride. */
 void x86_vga_crtc_preset(uint8_t mode);
+/* The emulated vertical retrace rate, 50..75 Hz (`[video] vga_hz`). */
+void x86_vga_set_hz(unsigned hz);
 
 /* ---- register writes with an effect, fed from x86_io.c ------------------- */
 

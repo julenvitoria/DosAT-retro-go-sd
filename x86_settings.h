@@ -185,6 +185,17 @@ typedef enum {
      */
     X86_SET_VGA_PAGES = 7,
 
+    /*
+     * `[video] vga_hz`: the rate of the emulated vertical retrace (0x3DA bit
+     * 3). 70 is what a VGA scans 200/400-line modes at, and the default. The
+     * panel is 60 Hz, so a title that renders one frame per retrace makes 70
+     * frames for every 60 shown and one in six is never seen: the ball and
+     * the scroll advance in uneven steps (Epic Pinball, owner's video,
+     * 2026-11-07). 60 gives one guest frame per panel frame at the cost of
+     * running a retrace-timed title at 6/7 speed. Range 50..75.
+     */
+    X86_SET_VGA_HZ = 8,
+
     X86_SET_COUNT
 } x86_setting_id_t;
 
