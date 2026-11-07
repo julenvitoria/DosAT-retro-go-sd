@@ -329,6 +329,12 @@ uint32_t x86_eip_log_idx;
 volatile uint32_t x86_x87_escapes = 0;
 
 uint32_t x86_oddsp_log[82];
+#ifdef X86_DIAG_EVR
+uint32_t x86_evr[128]; uint32_t x86_evr_idx, x86_evr_frozen;
+#endif
+#ifdef X86_DIAG_WILD
+uint32_t x86_diag_wild[3];   /* first linear >= 16 MB from a ModRM, its EIP, count */
+#endif
 
 /*
  * DIV/IDIV r/m32 with a dividend that does not fit in 32 bits (EDX:EAX).
