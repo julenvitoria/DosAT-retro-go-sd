@@ -820,6 +820,40 @@ def run_test(args):
                 "mem_expected": [(0x2000, bytes([0xAA, 0xBB, 0xCC]))],
             },
             {
+                # DOS/16M's IRQ-reflection exit copies its 58-byte frame with
+                # `67 F3 66 A5` (rep a32 movsd, ECX=14) then `67 A5`. Both
+                # buffers here straddle a 4 KB granule at odd offsets, which
+                # the frame copy does on a stack that is not page aligned.
+                "name": "REP A32 MOVSD + A32 MOVSW (16-bit) across a granule",
+                "mode": 16,
+                "code": bytes([0x67, 0xF3, 0x66, 0xA5, 0x67, 0xA5, 0xF4]),
+                "regs_initial": {1: 14, 6: 0x0FF6, 7: 0x2FEA},
+                "regs_expected": {1: 0, 6: 0x0FF6 + 58, 7: 0x2FEA + 58},
+                "expected_eip": 7,
+                "ram_setup": [(0x0FF6, bytes(range(1, 59)))],
+                "mem_expected": [(0x2FEA, bytes(range(1, 59)))],
+            },
+            {
+                # DOS/16M's interrupt return is `pop ds / pop es / pop fs /
+                # pop gs / popad / add esp,6 / iretd` in a 16-bit segment.
+                "name": "POP ES/FS/GS (16-bit) each move SP by two",
+                "mode": 16,
+                "code": bytes([0x07, 0x0F, 0xA1, 0x0F, 0xA9, 0xF4]),
+                "regs_initial": {4: 0x0100},
+                "regs_expected": {4: 0x0106},
+                "expected_eip": 6,
+                "ram_setup": [(0x0100, bytes([0x34, 0x12, 0x78, 0x56, 0xBC, 0x9A]))],
+            },
+            {
+                "name": "POPAD + ADD ESP,6 (16-bit code, 66 prefixes) move ESP by 38",
+                "mode": 16,
+                "code": bytes([0x66, 0x61, 0x66, 0x83, 0xC4, 0x06, 0xF4]),
+                "regs_initial": {4: 0x0100},
+                "regs_expected": {4: 0x0126, 0: 0x403F3E3D},
+                "expected_eip": 7,
+                "ram_setup": [(0x0100, bytes(range(0x21, 0x41)))],
+            },
+            {
                 "name": "STOSW (16-bit) leaves EDI[31:16] alone",
                 "code": bytes([0xAB, 0xF4]),
                 "mode": 16,

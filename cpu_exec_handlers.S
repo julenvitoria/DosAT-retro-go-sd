@@ -976,7 +976,7 @@ OP .op_lea_8D
        LEA, and got 0x967 paragraphs instead of 0x5FE. The store is ST_V so a
        16-bit LEA leaves the high half of the destination alone. */
     LDR.W R5, [R6, #4]             @ the base MODRM_SEG added
-    SUB.W R7, R7, R5
+    SUB.W R7, R3, R5               @ R3: MODRM_SEG's sum before the A24 wrap
     TST.W R2, #ADDRSIZE_XOR
     IT EQ
     UXTHEQ R7, R7
@@ -2392,6 +2392,33 @@ L(MODRM_SEG):
     ADDEQ R6, R8, R12              @ take this form's default (DS, or SS for BP/SP)
     LDR.W R5, [R6, #4]             @ descriptor base (SEL 0, FLAGS 2, BASE 4)
     ADD R7, R7, R5
+    MOV R3, R7                     @ unwrapped, for LEA (base + offset)
+    /* 24 ADDRESS LINES, as on a 386SX. The fold table is indexed by bits
+       12..23 and the host pointer is entry + linear, so a linear address at
+       or above 16 MB took a valid granule's entry and ran 16 MB times its top
+       byte off the end of host RAM -- a hard fault of the HOST. Doom reads
+       below a null pointer (linear 0xFFFFFE60, ~1,800 times by its title
+       screen, gwemu 2026-11-07); on a PC that is open bus or the BIOS ROM
+       alias, harmless. Wrapping it into the top of guest RAM is equally
+       harmless for a read and keeps the core alive for a write. One cycle
+       per decoded memory operand. */
+#ifdef X86_DIAG_WILD
+    TST.W R7, #0xFF000000
+    BEQ.N 2f
+    PUSH {R0, R1}
+    MOVW R0, #:lower16:x86_diag_wild
+    MOVT R0, #:upper16:x86_diag_wild
+    LDR R1, [R0, #8]
+    ADD.W R1, R1, #1
+    STR R1, [R0, #8]
+    CMP R1, #1
+    ITT EQ
+    STREQ R7, [R0, #0]
+    STREQ R10, [R0, #4]
+    POP {R0, R1}
+2:
+#endif
+    BIC.W R7, R7, #0xFF000000
     BX LR
 
 OP .op_call_rel32_E8
@@ -3980,6 +4007,9 @@ OP .op_pop_ss_17
 OP .op_pop_ds_1F
     MOV.W R0, #3
 L(POP_SREG):
+    LDR.W R3, [R8, #CPU_CR0]
+    TST.W R3, #1
+    BNE.W L(POP_SREG_PM)
     POP_V R5, R3, R12
     UXTH R5, R5
     MOV R4, R0
@@ -3987,6 +4017,32 @@ L(POP_SREG):
     BL L(SET_SREG)
     POP {LR}
     B.W .fetch_decode_loop
+
+/* Protected mode, out of line: a descriptor fault on the popped selector is
+   DELIVERED through the IDT (x86_pmode_pop_sreg_fault) rather than ending the
+   guest, because a DOS extender's interrupt return pops selectors that can
+   have been freed while the interrupt ran, and its #GP handler is what
+   copes with that on silicon. Same SS shadow as L(SET_SREG_PMODE). */
+L(POP_SREG_PM):
+    STR.W R11, [R8, #EFLAGS_OFFSET]
+    MOV R1, R0
+    MOV R0, R8
+    MOV.W R2, #OPSZ
+    MOV R3, R10
+    BL x86_pmode_pop_sreg
+    CMP R0, #1
+    BLO.W .fetch_decode_loop           @ 0: loaded
+    BHI.N 2f                           @ >1: undeliverable, exit
+    LDR.W R11, [R8, #EFLAGS_OFFSET]    @ 1: the fault was delivered
+    LDR.W R10, [R8, #EIP_OFFSET]
+    LDR.W R3, [R8, #SEG_CS_BASE]
+    ADD.W R10, R10, R3
+    B.W .fetch_decode_loop
+2:  MOV.W R0, #X86_EXIT_GPF
+    STR.W R0, [R8, #CPU_EXIT_REASON]
+    LDR.W R0, [R8, #CPU_PMODE_ERR]
+    STR.W R0, [R8, #CPU_EXIT_INFO]
+    B.W .save_state_and_exit
 
 /* Far JMP (EA) and far CALL (9A): an immediate ptr16:v -- offset first at the
    operand size, then the selector. Both reload CS, so EIP is rebuilt from the

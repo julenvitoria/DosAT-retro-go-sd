@@ -4335,6 +4335,8 @@ deliver:
  * guest whose music or movement runs off INT 08h loses a beat here and how
  * often that happens is exactly what nobody could see before.
  */
+static uint32_t tick_isr_mark;          /* guest_ticks_dropped+1 when IRQ 0 got stuck */
+volatile uint32_t x86_tick_isr_forced;  /* in-service IRQ 0 cleared by the bound   */
 static void arm_tick_irq(void)
 {
     if (!tick_irqs_owed)
@@ -4347,9 +4349,30 @@ static void arm_tick_irq(void)
        its EOI, and a handler that re-enables IF before it EOIs (DOS/16M does,
        to reflect the tick to real mode) relies on exactly that. The tick stays
        OWED and goes in at the next arm after the EOI (Dark Forces, docs/13). */
-    if (x86_pic_in_service(0))
-        return;
+    if (x86_pic_in_service(0)) {
+        /* ...BOUNDED, like the keyboard's and the Sound Blaster's. A tick
+           whose handler returns without an EOI otherwise holds IRQ 0 off for
+           good, and every guest clock stops with it. Doom under DOS/4GW, once
+           DMX's timer runs at 140 Hz: three EOIs, then a tick that never got
+           one, and I_StartupTimer waited forever on a tick counter that no
+           longer moved (gwemu, 2026-11-07, about one run in two; which path
+           drops the EOI is not yet known -- docs/13). Eight ticks' worth of
+           guest time with the level held is not a handler still running. */
+        if (!tick_isr_mark) {
+            tick_isr_mark = guest_ticks_dropped + 1u;
+            return;
+        }
+        if (guest_ticks_dropped + 1u - tick_isr_mark < 8u)
+            return;
+#ifdef X86_DIAG_EVR
+        x86_evr_frozen = 1;
+#endif
+        x86_pic_eoi_level(0);
+        x86_tick_isr_forced++;
+    }
+    tick_isr_mark = 0;
     cpu_state_ptr->hard_int_pending = 0x08;
+    EVR('A', guest_ticks, cpu_state_ptr->eflags);
     x86_pic_mark_in_service(0);
     x86_pit_counter_forced(1);       /* NOT a raw store: see x86_pit_sync() */
     tick_irqs_owed--;
