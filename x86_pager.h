@@ -324,6 +324,10 @@ int x86_pager_reclaim_from_arena(void);
  * build AND the tier-1 harness's mode, so the arms that state the static
  * reserve's arithmetic keep stating it.
  */
+/* Let the next donations ignore the measured reserve (down to the floor):
+   a Mode Y card the title's .cfg pinned. */
+void x86_pager_set_donate_pinned(int on);
+
 #define X86_PG_RESERVE_FLOOR   64u   /* frames the guest keeps come what may */
 #define X86_PG_RESERVE_MARGIN   8u   /* runway: the shrink fires on this      */
 #define X86_PG_POLICY_QUIET    60u   /* frames of calm before lending again   */

@@ -464,8 +464,18 @@ static void io_log(unsigned dir, uint32_t port, uint32_t value)
 /* The 0x3DA beam, in 1.193182 MHz PIT ticks: a 70 Hz frame, a 31.47 kHz line,
    vertical retrace over the last sixteenth of the frame (~0.9 ms) and the
    horizontal blank over the last ~5 us of each line. */
-#define VGA_FRAME_TICKS     17045u
+#define VGA_FRAME_TICKS_70  17045u
+/* The frame, settable per title (`[video] vga_hz`, x86_vga_set_hz). */
+static uint32_t vga_frame_ticks = VGA_FRAME_TICKS_70;
+#define VGA_FRAME_TICKS     vga_frame_ticks
 #define VGA_VRETRACE_TICKS  (VGA_FRAME_TICKS / 16u)
+
+X86_UC_TEXT(x86_vga_set_hz) void x86_vga_set_hz(unsigned hz)
+{
+    if (hz < 50u || hz > 75u)
+        hz = 70u;
+    vga_frame_ticks = hz == 70u ? VGA_FRAME_TICKS_70 : 1193182u / hz;
+}
 #define VGA_LINE_TICKS      38u
 #define VGA_HBLANK_TICKS    6u
 #define VGA_CRTC_REGS  32
@@ -596,7 +606,7 @@ uint8_t *x86_vga_attr_regs(void) { return vga_regs.attr; }
  * leaves behind: 0x28 (40 words = 80 bytes) for 13h, 0x14 (20 words = 40
  * bytes) for 0Dh, and a display start of zero for both.
  */
-void x86_vga_crtc_preset(uint8_t mode)
+X86_UC_TEXT(x86_vga_crtc_preset) void x86_vga_crtc_preset(uint8_t mode)
 {
     vga_regs.crtc[0x0C] = 0;
     vga_regs.crtc[0x0D] = 0;
@@ -618,6 +628,35 @@ void x86_vga_crtc_preset(uint8_t mode)
     for (unsigned i = 0; i < 16; i++)
         vga_regs.attr[i] = (uint8_t)i;
     vga_regs.attr[0x13] = 0;            /* no pel panning until asked */
+
+    /* THE REST OF WHAT A VGA BIOS LEAVES, BECAUSE TITLES READ IT BACK. The
+       usual way to enter Mode X is read-modify-write: Sequencer 4 &= ~8,
+       CRTC 0x14 &= ~0x40, CRTC 0x17 |= 0x40, GC 5 &= ~0x10, GC 6 &= ~2. With
+       these registers reading 0, the read-modify-write produced values a VGA
+       never holds -- and Dark Forces, whose code ORs bits into Sequencer 4
+       and leaves the rest, read 0, wrote 0x04, and so UNCHAINED mode 13h
+       while it went on drawing a chained, linear frame: every byte landed in
+       all four planes and the intro came out smeared sideways (owner's
+       video, 2026-11-06). Values from the IBM VGA BIOS parameter tables. */
+#ifdef X86_NO_VGA_BIOS_PRESET
+    return;
+#endif
+    /* MODE 13h ONLY. The same preset for 0Dh/10h/12h and text left garbage
+       in Keen 4's letterbox rows on silicon (owner, 2026-11-07; build with
+       X86_NO_VGA_BIOS_PRESET was clean, gwemu clean either way). Only Dark
+       Forces' Mode X entry needed it, and that is a 13h read-modify-write. */
+    if (mode != 0x13)
+        return;
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) seq13[5] = { 0x03, 0x01, 0x0F, 0x00, 0x0E };
+    static const uint8_t __attribute__((section(".text.__uc.vga_bios_regs"))) gc13[9]  = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF };
+    for (unsigned i = 0; i < 5; i++)
+        vga_regs.seq[i] = seq13[i];
+    for (unsigned i = 0; i < 9; i++)
+        vga_regs.gc[i] = gc13[i];
+    vga_regs.attr[0x10] = 0x41;
+    vga_regs.attr[0x12] = 0x0F;
+    vga_regs.crtc[0x14] = 0x40;
+    vga_regs.crtc[0x17] = 0xA3;
 }
 
 /*
