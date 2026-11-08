@@ -632,6 +632,7 @@ static uint32_t   rate_window_frames;
    60 fps, so every slower frame threw ticks away -- measured as ~351 of 473
    per second, with guest_ticks_dropped climbing ~100/s. 24 covers 473 Hz
    down to 20 fps and 560 Hz down to 24. */
+#define TICK_IRQ0_WAIT_MAX 64u   /* due ticks held back before a handler is let go */
 #define TICK_MIN_INSNS 2500u   /* see the phase plan: no closer ticks than this */
 #define TICK_IRQ_MAX          512u
 #define TICK_STALL_MS        1000u    /* longer than this is a stall, not lag */
@@ -4336,12 +4337,30 @@ deliver:
  * guest whose music or movement runs off INT 08h loses a beat here and how
  * often that happens is exactly what nobody could see before.
  */
+static uint32_t tick_irq0_wait;         /* arm attempts while a handler runs */
+volatile uint32_t x86_tick_irq0_overruns;
 static uint32_t tick_isr_mark;          /* guest_ticks_dropped+1 when IRQ 0 got stuck */
 volatile uint32_t x86_tick_isr_forced;  /* in-service IRQ 0 cleared by the bound   */
 static void arm_tick_irq(void)
 {
+    /* ONE PROTECTED-MODE TIMER HANDLER AT A TIME. DMX (Doom under DOS/4GW)
+       EOIs its 140 Hz tick early and then runs its services with interrupts
+       on; whenever the host is slower than a 386 those services outlast a
+       tick, and the next one nested inside them -- four deep, and the
+       innermost then returned WITHOUT its EOI, which stopped the clock. The
+       instruction floor (TICK_MIN_INSNS) was not enough under paging. So the
+       next tick waits until this one's frame has been popped (x86_pmode_iret);
+       the guest's clock runs slow instead, as on a slower machine. Bounded:
+       a handler that leaves some other way is let go after a few frames. */
     if (!tick_irqs_owed)
         return;
+    if (x86_irq0_active) {
+        if (++tick_irq0_wait < TICK_IRQ0_WAIT_MAX)
+            return;
+        x86_irq0_active = 0;
+        x86_tick_irq0_overruns++;
+    }
+    tick_irq0_wait = 0;
     if (cpu_state_ptr->hard_int_pending) {
         guest_tick_irq_lost++;
         return;
@@ -4374,6 +4393,7 @@ static void arm_tick_irq(void)
     tick_isr_mark = 0;
     cpu_state_ptr->hard_int_pending = 0x08;
     EVR('A', guest_ticks, cpu_state_ptr->eflags);
+    x86_irq0_expect = (uint8_t)(cpu_state_ptr->cr0 & 1u);
     x86_pic_mark_in_service(0);
     x86_pit_counter_forced(1);       /* NOT a raw store: see x86_pit_sync() */
     tick_irqs_owed--;

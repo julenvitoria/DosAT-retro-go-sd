@@ -162,6 +162,10 @@ volatile uint32_t x86_pmode_faults;
 /* ------------------------------------------------------------------------ */
 
 volatile uint32_t x86_pmode_seg_faults_delivered;
+/* See arm_tick_irq (src/main.c) and x86_pmode_int_gate. */
+uint8_t  x86_irq0_expect, x86_irq0_active;
+uint16_t x86_irq0_ss;
+uint32_t x86_irq0_esp;
 
 static int fault(X86CPUState *cpu, uint32_t vec, uint32_t err)
 {
@@ -887,6 +891,15 @@ int x86_pmode_int_gate(X86CPUState *cpu, uint32_t vec, uint32_t flags,
     cpu->eflags = new_eflags;
 
     x86_pmode_gates++;
+    /* IRQ 0's FRAME, for arm_tick_irq (src/main.c): the tick the host armed
+       has just been taken through the IDT. Its handler is running until an
+       IRET pops this very frame (x86_pmode_iret below). */
+    if (vec == 8u && x86_irq0_expect) {
+        x86_irq0_expect = 0;
+        x86_irq0_active = 1;
+        x86_irq0_ss = cpu->segs[X86_CPU_SEG_SS].sel;
+        x86_irq0_esp = cpu->regs[4];
+    }
     EVR('G', vec, (gsel << 16) | (goff & 0xFFFFu));
     return 0;
 }
@@ -957,6 +970,10 @@ int x86_pmode_iret(X86CPUState *cpu, uint32_t op32)
     uint32_t saved_esp = cpu->regs[4];
     uint32_t mask;
     int rc;
+
+    if (x86_irq0_active && saved_esp == x86_irq0_esp
+        && cpu->segs[X86_CPU_SEG_SS].sel == x86_irq0_ss)
+        x86_irq0_active = 0;
 
     cpl = cpu->cpl & 3u;
 
