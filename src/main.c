@@ -5052,8 +5052,14 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                under Doom nested four deep and the innermost returned without
                its EOI (gwemu, 2026-11-07). A machine that slow simply gets
                fewer ticks: the guest's clock runs slow, which is what a slow
-               386 would have shown it anyway. */
-            if (per < TICK_MIN_INSNS)
+               386 would have shown it anyway.
+               PROTECTED MODE ONLY. A real-mode title's handler is direct and
+               short, and the floor only cost it: Wolfenstein 3D's 700 Hz
+               AdLib clock lost ticks whenever a frame went to disk, and its
+               music hung notes at "Get Psyched!" (owner, 2026-11-08). The
+               nesting needs an extender's reflection to make the handler
+               long. */
+            if (per < TICK_MIN_INSNS && (cpu_state_ptr->cr0 & 1u))
                 per = TICK_MIN_INSNS;
             if (x86_pit_ch_mode[0] == 0u)
                 per = 0x7FFFFFFFu;      /* one-shot: nothing after the first */
@@ -5068,7 +5074,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
             if (subs > TICK_IRQ_MAX)
                 subs = TICK_IRQ_MAX;
             sub_slice = slice / subs;
-            if (sub_slice < TICK_MIN_INSNS && subs > 1u) {
+            if (sub_slice < TICK_MIN_INSNS && subs > 1u && (cpu_state_ptr->cr0 & 1u)) {
                 /* Same floor as the phase plan's (TICK_MIN_INSNS). */
                 subs = slice / TICK_MIN_INSNS;
                 if (subs < 1u)
