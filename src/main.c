@@ -632,7 +632,7 @@ static uint32_t   rate_window_frames;
    60 fps, so every slower frame threw ticks away -- measured as ~351 of 473
    per second, with guest_ticks_dropped climbing ~100/s. 24 covers 473 Hz
    down to 20 fps and 560 Hz down to 24. */
-#define TICK_MIN_INSNS 8000u   /* see the phase plan: no closer ticks than this */
+#define TICK_MIN_INSNS 2500u   /* see the phase plan: no closer ticks than this */
 #define TICK_IRQ_MAX          512u
 #define TICK_STALL_MS        1000u    /* longer than this is a stall, not lag */
 static uint32_t tick_acc;             /* ms * TICK_NUM, below one IRQ 0      */
