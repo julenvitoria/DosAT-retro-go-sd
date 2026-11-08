@@ -470,6 +470,10 @@ void x86_kbd_latch_next(void);              /* host harness: load the next code 
 void x86_pic_mark_in_service(unsigned level);
 void x86_pic_eoi_level(unsigned level);      /* a BIOS HLE handler's own EOI */
 void x86_pic_eoi_nonspecific(void);
+/* A protected-mode IRQ 0 handler still running (its frame not yet popped). */
+extern uint8_t  x86_irq0_expect, x86_irq0_active;
+extern uint16_t x86_irq0_ss;
+extern uint32_t x86_irq0_esp;
 #ifdef X86_DIAG_EVR
 extern uint32_t x86_evr[128]; extern uint32_t x86_evr_idx, x86_evr_frozen;
 static inline void x86_evr_put(uint32_t tag, uint32_t a, uint32_t b)
