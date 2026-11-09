@@ -666,6 +666,7 @@ void x86_disk_cache_flush(void);
    -- keeps its live value across a state load. Registered at init. */
 void x86_ss_keep(void *p, uint32_t bytes);
 void x86_io_ss_keep(void);
+void x86_io_ss_loaded(void);
 void x86_disk_ss_keep(void);
 void x86_dos_ss_sync(void);
 extern volatile uint32_t x86_disk_cache_ok;        /* 0 = NOT backed          */
