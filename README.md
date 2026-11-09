@@ -85,6 +85,28 @@ time   = f5           ; TIME: F5 (en Monkey Island, guardar partida)
 Teclado en pantalla, ratón y cambio de disco:
 [docs/controles.md](docs/controles.md).
 
+## Partidas guardadas
+
+Desde el menú de retro-go (**PAUSE/SET**) puedes guardar la partida en
+cualquiera de sus huecos y volver a ella cuando quieras. Al lanzar un juego que
+tiene partidas guardadas, retro-go te deja elegir entre **Continuar** y empezar
+de nuevo.
+
+- **Qué se guarda:** el PC emulado entero: CPU, memoria (también la parte que
+  el núcleo tenía en la tarjeta SD), vídeo, sonido y el estado del DOS. Cada
+  guardado ocupa algo más de 1 MB; los juegos con DOS/4GW (Doom, Dark Forces)
+  bastante más, porque usan mucha memoria extendida.
+- **Tarda unos segundos** en guardar y en cargar: todo eso va y viene de la SD.
+- **Solo vale con el mismo `dosat.bin` y el mismo `.cfg`.** Si actualizas el
+  núcleo o cambias algo que reserva memoria (`vga_pages`, las tarjetas de
+  sonido…), los guardados de antes se rechazan: no se carga nada y el juego
+  sigue como estaba.
+- **El disco del juego no vuelve atrás.** Lo que el juego haya escrito en su
+  `.dsk` (sus propias partidas, récords, configuración) se queda como esté.
+  Lo más seguro es usar o los guardados de retro-go o las partidas del propio
+  juego, no mezclarlos.
+- **No funciona con «Cold RAM->NOR»** activado en el menú (viene apagado).
+
 ## Más
 
 - [docs/desarrollo.md](docs/desarrollo.md): compilar el núcleo, ramas del
