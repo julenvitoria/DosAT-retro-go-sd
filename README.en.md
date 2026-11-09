@@ -85,6 +85,28 @@ time   = f5           ; TIME: F5 (in Monkey Island, save game)
 On-screen keyboard, mouse and disk swapping:
 [docs/controles.en.md](docs/controles.en.md).
 
+## Save states
+
+From the retro-go menu (**PAUSE/SET**) you can save the game into any of its
+slots and come back to it whenever you like. When you launch a game that has
+saves, retro-go lets you choose between **Resume** and starting over.
+
+- **What is saved:** the whole emulated PC: CPU, memory (including the part
+  the core keeps on the SD card), video, sound and the DOS state. A save is a
+  little over 1 MB; DOS/4GW games (Doom, Dark Forces) take a lot more, because
+  they use a lot of extended memory.
+- **It takes a few seconds** to save and to load: all of that goes to and
+  from the SD card.
+- **A save only works with the same `dosat.bin` and the same `.cfg`.** After
+  updating the core, or changing something that reserves memory
+  (`vga_pages`, the sound cards…), older saves are refused: nothing is loaded
+  and the game carries on as it was.
+- **The game's disk is not rolled back.** Whatever the game wrote to its
+  `.dsk` (its own saved games, high scores, settings) stays as it is. The
+  safest thing is to use either retro-go's saves or the game's own, not both.
+- **It does not work with "Cold RAM->NOR"** turned on in the menu (it is off
+  by default).
+
 ## More
 
 - [docs/desarrollo.en.md](docs/desarrollo.en.md): building the core, the
