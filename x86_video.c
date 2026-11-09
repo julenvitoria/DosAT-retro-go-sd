@@ -116,6 +116,13 @@ static const x86_vmode vmodes[] = {
        mode set that is accepted and cannot be rendered leaves the guest drawing
        into memory nothing reads. See 11-ega-planar.md, "Out of scope". */
     { 0x0D, VM_EGA4, 40 },
+    /* 0Eh, 640x200x16: the same card at 80 bytes a row, drawn 2:1 onto the
+       panel. Pinball Dreams 1 and 2 put their credit and "Presents" screens
+       in it; refused, the title stayed in 13h, unchained it for its planar
+       writes, and its 1-bit plane-0 text came out as one dot in four. The
+       card is the virtual one (x86_video_planar.c), so 16,000 visible offsets
+       fit the same way Keen 4's 64 KB scrolling plane does. */
+    { 0x0E, VM_EGA4, 80 },
     { 0x13, VM_VGA8, 40 },
 };
 
@@ -143,7 +150,7 @@ static const x86_vmode *vmode_find(uint8_t mode)
        so this cannot pass here and fail at the claim below. If the claim is
        already held (we are re-entering 0Dh) the dry run accounts for that --
        re-claiming an id releases the old claim first. */
-    if (mode == 0x0D
+    if ((mode == 0x0D || mode == 0x0E)
         && (!x86_vga13_ok
             || !x86_arena_would_fit(X86_ARENA_ID_EGA, 1,
                                     4u * X86_EGA_PLANE_OFFSETS))) {
@@ -184,6 +191,7 @@ static void text_render(uint8_t *dst, uint32_t stride);
 static void cga_mode6_blit(uint8_t *dst, uint32_t stride);
 static void vga13_blit(uint8_t *dst, uint32_t stride);
 static void blit_ega16(uint8_t *dst, uint32_t stride);
+static void blit_ega16_wide(uint8_t *dst, uint32_t stride);
 static void text_render_wide(uint8_t *dst, uint32_t stride);
 
 /*
@@ -612,7 +620,10 @@ static void video_render_body(uint8_t *dst, uint32_t stride)
         vga13_blit(top, stride);
         break;
     case VM_EGA4:
-        blit_ega16(top, stride);
+        if (video_mode == 0x0E)
+            blit_ega16_wide(top, stride);
+        else
+            blit_ega16(top, stride);
         break;
     default:
         cga_mode4_blit(top, cga_vram, cga_vram + CGA_PLANE_ODD,
@@ -1003,7 +1014,7 @@ static void vga13_blit(uint8_t *dst, uint32_t stride)
  * which is why 16-31 are MIRRORED here rather than left stale: unreachable from
  * a 4-bit pixel, but lcd_pack_color() searches the whole table.
  */
-static void ega_sync_palette(void)
+X86_UC_TEXT(ega_sync_palette) static void ega_sync_palette(void)
 {
     const uint8_t *attr = x86_vga_attr_palette();
 
@@ -1077,6 +1088,41 @@ EGA16_HOT __attribute__((noinline)) static void ega16_row(uint32_t *out, unsigne
                | (ega_nib[p2 >> 4] << 2) | (ega_nib[p3 >> 4] << 3);
         out[1] = ega_nib[p0 & 15u] | (ega_nib[p1 & 15u] << 1)
                | (ega_nib[p2 & 15u] << 2) | (ega_nib[p3 & 15u] << 3);
+    }
+}
+
+/*
+ * Mode 0Eh: 640 pixels a row onto a 320-pixel panel. Each pair becomes ONE
+ * pixel, and the pair's left pixel wins unless it is colour 0: on a picture
+ * that is "take every other pixel", but a 1-pixel stroke on a black ground --
+ * the whole of Pinball Dreams' credit text, which is 1-bit art in plane 0 --
+ * survives whichever column it fell on instead of half of it vanishing.
+ * Cold: no title has been seen to play in 0Eh, only to show screens in it.
+ */
+#define EGA_WIDE_ROWBYTES 80u
+X86_UC_TEXT(blit_ega16_wide)
+static void blit_ega16_wide(uint8_t *dst, uint32_t stride)
+{
+    uint8_t *const *ptab = x86_vga_ega_ptab();
+    const unsigned pitch = x86_vga_row_pitch();
+    const unsigned pan   = x86_vga_pel_panning();
+    unsigned addr = x86_vga_crtc_start();
+
+    ega_sync_palette();
+    x86_vga_ega_frame(addr, pitch, EGA_ROWS);
+    if (!ptab) {
+        for (unsigned y = 0; y < EGA_ROWS; y++)
+            memset(dst + y * stride, 0, EGA_WIDTH);
+        return;
+    }
+    for (unsigned y = 0; y < EGA_ROWS; y++, dst += stride, addr = (addr + pitch) & 0xFFFFu) {
+        uint32_t line[(2u * EGA_WIDTH + 8u) / 4u];
+        const uint8_t *l;
+
+        ega16_row(line, addr, EGA_WIDE_ROWBYTES + 1u, ptab);
+        l = (const uint8_t *)line + pan;
+        for (unsigned x = 0; x < EGA_WIDTH; x++, l += 2)
+            dst[x] = l[0] ? l[0] : l[1];
     }
 }
 
@@ -1779,6 +1825,10 @@ static int mode_select(uint8_t mode)
     }
     if (d == cur_desc && mode == video_mode)
         return 1;
+    /* 0Dh <-> 0Eh is the same card at another pitch: arming is idempotent,
+       so drop it first or the new mode inherits the old one's planes. */
+    if (d->kind == VM_EGA4 && cur_desc->kind == VM_EGA4)
+        x86_vga_planar_arm(0);
 
     planar_storage_follow(d->kind);
     /* Disarm FIRST, unconditionally: leaving Mode Y armed into a text mode set

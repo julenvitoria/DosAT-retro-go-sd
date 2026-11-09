@@ -228,11 +228,41 @@ uint32_t x86_guest_copy_out(void *dst, uint32_t lin, uint32_t bytes)
     return done;
 }
 
-uint32_t x86_guest_copy_in(uint32_t lin, const void *src, uint32_t bytes)
+/*
+ * A HOST-SIDE WRITE INTO THE VGA APERTURE WHILE THE CARD IS PLANAR.
+ *
+ * Pinball Dreams loads its picture screens with INT 21h AH=3Fh straight into
+ * A000:0, one read per plane with the Map Mask set before each. A raw memcpy
+ * lands every read in the aperture's interleaved storage as if it were plain
+ * memory -- byte i into plane i&3 of cell i>>2 -- so the screen came up with
+ * only plane 0 lit in each four-pixel group: the dotted title screens.
+ * A real card applies the write path to a DMA'd or BIOS-copied byte exactly
+ * as to a CPU one, so send them through the same planar store.
+ */
+volatile uint32_t x86_vga_hle_plane_stores;
+X86_UC_TEXT(x86_guest_copy_in_vga)
+static uint32_t x86_guest_copy_in_vga(uint32_t lin, const uint8_t *s,
+                                      uint32_t run)
+{
+    for (uint32_t i = 0; i < run; i++)
+        x86_vga_planar_store(lin + i - 0xA0000u, s[i], 1);
+    x86_vga_hle_plane_stores += run;
+    return run;
+}
+
+X86_UC_TEXT(x86_guest_copy_in) uint32_t x86_guest_copy_in(uint32_t lin, const void *src, uint32_t bytes)
 {
     const uint8_t *s = (const uint8_t *)src;
     uint32_t done = 0;
     while (done < bytes) {
+        uint32_t at = lin + done;
+        if (at - 0xA0000u < 0x10000u && x86_vga_planar_active()) {
+            uint32_t run = 0xB0000u - at;
+            if (run > bytes - done)
+                run = bytes - done;
+            done += x86_guest_copy_in_vga(at, s + done, run);
+            continue;
+        }
         uint32_t off = (lin + done) & (PAGE_SIZE - 1u);
         uint32_t run = PAGE_SIZE - off;
         if (run > bytes - done)
