@@ -469,6 +469,16 @@ int x86_kbd_raise_irq(X86CPUState *cpu);
 void x86_kbd_latch_next(void);              /* host harness: load the next code */
 void x86_pic_mark_in_service(unsigned level);
 void x86_pic_eoi_level(unsigned level);      /* a BIOS HLE handler's own EOI */
+void x86_pic_eoi_nonspecific(void);
+#ifdef X86_DIAG_EVR
+extern uint32_t x86_evr[128]; extern uint32_t x86_evr_idx, x86_evr_frozen;
+static inline void x86_evr_put(uint32_t tag, uint32_t a, uint32_t b)
+{ if (x86_evr_frozen) return; uint32_t i = (x86_evr_idx++ & 63u) * 2u;
+  x86_evr[i] = (tag << 24) | (a & 0xFFFFFFu); x86_evr[i + 1] = b; }
+#define EVR(t,a,b) x86_evr_put((t),(a),(b))
+#else
+#define EVR(t,a,b) ((void)0)
+#endif           /* OUT 20h,20h: highest TAKEN level */
 int  x86_pic_in_service(unsigned level);     /* 8259 ISR bit, for the tick arm */
 int x86_bios_kbd_irq(void);
 /* Scancode -> ASCII, the same decode INT 09h uses. Shared with the on-screen
@@ -870,6 +880,8 @@ int x86_pmode_int_gate(X86CPUState *cpu, uint32_t vec, uint32_t flags,
                        uint32_t err);
 /* `op32` is the INSTRUCTION's operand size, not the gate's. */
 int x86_pmode_iret(X86CPUState *cpu, uint32_t op32);
+int x86_pmode_pop_sreg(X86CPUState *cpu, uint32_t seg, uint32_t width,
+                       uint32_t lin_after);
 extern volatile uint32_t x86_pmode_gates;      /* gates delivered            */
 extern volatile uint32_t x86_pmode_irets;      /* pmode IRETs completed      */
 

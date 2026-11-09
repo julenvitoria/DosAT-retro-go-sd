@@ -161,11 +161,38 @@ volatile uint32_t x86_pmode_faults;
 
 /* ------------------------------------------------------------------------ */
 
+volatile uint32_t x86_pmode_seg_faults_delivered;
+
 static int fault(X86CPUState *cpu, uint32_t vec, uint32_t err)
 {
     cpu->pmode_excp = vec;
     cpu->pmode_err = err;
     x86_pmode_faults++;
+#ifdef X86_TRACE_ODDSP
+    {
+        /* DIAG (Doom #GP(0x204)): freeze the per-instruction EIP ring at the
+           first #GP on a chosen selector, BEFORE the guest's own fault handler
+           overwrites it. */
+        extern uint32_t x86_oddsp_log[82];
+        if ((vec == 13u || vec == 11u || vec == 12u) && !x86_oddsp_log[0]) {
+            x86_oddsp_log[0] = 2u;
+            x86_oddsp_log[1] = cpu->eip;
+            x86_oddsp_log[2] = cpu->regs[1];             /* ECX */
+            x86_oddsp_log[3] = cpu->regs[6];             /* ESI */
+            x86_oddsp_log[4] = cpu->segs[2].base;        /* SS base */
+            x86_oddsp_log[5] = cpu->regs[4];             /* ESP */
+            x86_oddsp_log[6] = cpu->regs[7];             /* EDI */
+            x86_oddsp_log[73] = cpu->segs[1].base;
+            x86_oddsp_log[74] = err;
+            x86_oddsp_log[75] = vec | ((uint32_t)cpu->segs[1].sel << 16);
+            uint32_t a = cpu->segs[2].base + cpu->regs[4] - 8u;
+            for (unsigned i = 0; i < 6; i++) {
+                const uint8_t *p = (const uint8_t *)x86_guest_ptr(a + 4u * i, 4);
+                x86_oddsp_log[76 + i] = p ? (uint32_t)(p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24) : 0xDEADu;
+            }
+        }
+    }
+#endif
     return (int)vec;
 }
 
@@ -513,7 +540,7 @@ int x86_pmode_load_seg(X86CPUState *cpu, uint32_t seg, uint32_t sel)
  * subsequent LDT-relative selector fails read_desc's bound. That is the
  * architectural behaviour and it falls out rather than needing a case.
  */
-int x86_pmode_lldt(X86CPUState *cpu, uint32_t sel)
+X86_UC_TEXT(x86_pmode_lldt) int x86_pmode_lldt(X86CPUState *cpu, uint32_t sel)
 {
     uint32_t w1, w2, flags;
     int rc;
@@ -860,6 +887,7 @@ int x86_pmode_int_gate(X86CPUState *cpu, uint32_t vec, uint32_t flags,
     cpu->eflags = new_eflags;
 
     x86_pmode_gates++;
+    EVR('G', vec, (gsel << 16) | (goff & 0xFFFFu));
     return 0;
 }
 
@@ -880,6 +908,48 @@ int x86_pmode_int_gate(X86CPUState *cpu, uint32_t vec, uint32_t flags,
  * (n_cs_rpl > cpl), which pops SS:ESP as well and needs the privilege-change
  * lane, and a return to V86 mode. Both come back as #GP.
  */
+/*
+ * POP Sreg in protected mode, whole: the pop, the descriptor load, and -- on a
+ * descriptor fault -- DELIVERY of that fault through the IDT instead of ending
+ * the guest.
+ *
+ * DOS/16M (DOS/4GW) returns from every reflected interrupt with `pop ds / pop
+ * es / pop fs / pop gs`, and its own #GP handler is what copes on silicon when
+ * one of those selectors was freed while the interrupt ran. A fault restarts
+ * the instruction, so nothing may have moved: the pop is undone and the frame
+ * carries the POP's own EIP. `seg` 4/5 are the two-byte 0F A1 / 0F A9 forms;
+ * a prefixed POP Sreg would restart one byte late, which no extender code we
+ * have seen does. Cold, and out of ITCM and RAM_EMU both: it runs a few
+ * hundred times a second under DOS/16M.
+ * Returns 0 loaded, 1 fault delivered (resume at cpu->eip), 2 exit.
+ */
+X86_UC_TEXT(x86_pmode_pop_sreg)
+int x86_pmode_pop_sreg(X86CPUState *cpu, uint32_t seg, uint32_t width,
+                       uint32_t lin_after)
+{
+    uint32_t sel, vec, err;
+    int rc = stack_pop(cpu, &sel, width);
+    if (rc)
+        return 2;
+    if (!x86_pmode_load_seg(cpu, seg, sel & 0xFFFFu)) {
+        /* The SS interrupt shadow, as L(SET_SREG_PMODE) does it. */
+        if (seg == X86_CPU_SEG_SS && cpu->pit_counter == 1u)
+            cpu->pit_counter = 2u;
+        return 0;
+    }
+    vec = cpu->pmode_excp;
+    err = cpu->pmode_err;
+    {
+        uint32_t mask = ss_mask(cpu), esp = cpu->regs[4];
+        cpu->regs[4] = (esp & ~mask) | ((esp - width) & mask);
+    }
+    cpu->eip = lin_after - cpu->segs[X86_CPU_SEG_CS].base - (seg >= 4u ? 2u : 1u);
+    if (vec != EX_GP && vec != EX_NP && vec != EX_SS)
+        return 2;
+    x86_pmode_seg_faults_delivered++;
+    return x86_pmode_int_gate(cpu, vec, X86_INT_HAS_ERROR, err) ? 2 : 1;
+}
+
 int x86_pmode_iret(X86CPUState *cpu, uint32_t op32)
 {
     uint32_t width = op32 ? 4u : 2u;
@@ -995,6 +1065,7 @@ int x86_pmode_iret(X86CPUState *cpu, uint32_t op32)
                   & ~FLAG_VM;
 
     x86_pmode_irets++;
+    EVR('I', cpu->segs[X86_CPU_SEG_CS].sel, cpu->eip | (cpu->eflags & 0x200u ? 0x80000000u : 0));
     return 0;
 }
 
@@ -1230,7 +1301,7 @@ int x86_pmode_verrw(X86CPUState *cpu, uint32_t sel, uint32_t write)
  * does -- would otherwise see a TSS it believes it installed still marked
  * available. It cannot straddle a granule: it is one byte.
  */
-int x86_pmode_ltr(X86CPUState *cpu, uint32_t sel)
+X86_UC_TEXT(x86_pmode_ltr) int x86_pmode_ltr(X86CPUState *cpu, uint32_t sel)
 {
     uint32_t w1, w2, flags, type;
     X86CPUSeg tmp;

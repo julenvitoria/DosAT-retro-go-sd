@@ -373,6 +373,28 @@ void x86_pic_mark_in_service(unsigned level) { pic_isr |= (uint8_t)(1u << level)
 void x86_pic_eoi_level(unsigned level)       { pic_isr &= (uint8_t)~(1u << level); }
 int  x86_pic_in_service(unsigned level)       { return (pic_isr >> level) & 1u; }
 
+/* A NON-SPECIFIC EOI: the highest-priority level the CPU has actually TAKEN.
+   A level armed into the one-deep slot is marked in service early (see the
+   port 0x20 arm), so it is skipped here -- on the chip it is only requested
+   until INTA. Shared by the guest's OUT 20h,20h and the BIOS INT 08h stub,
+   which must not differ: the stub clearing level 0 outright took the bit of
+   a tick ARMED behind it (DMX chains its 140 Hz handler to the BIOS's every
+   eighth tick, under DOS/16M), that tick then reached DOS/16M's vector-8
+   dispatcher with the ISR reading 0, was taken for a CPU exception with an
+   error code, and its frame was unwound four bytes off: #GP at the IRETD
+   (Doom, I_StartupTimer, gwemu 2026-11-07). */
+X86_UC_TEXT(x86_pic_eoi_nonspecific) void x86_pic_eoi_nonspecific(void)
+{
+    uint8_t eff = pic_isr;
+    switch (cpu_state_ptr->hard_int_pending) {
+    case 0x08u: eff &= (uint8_t)~0x01u; break;
+    case 0x09u: eff &= (uint8_t)~0x02u; break;
+    case 0x0Du: eff &= (uint8_t)~0x20u; break;
+    default: break;
+    }
+    pic_isr &= (uint8_t)~(eff & (uint8_t)(0u - eff));
+}
+
 static uint8_t sb_irq_pending_line(void);   /* the SB's line; see the sound block */
 static uint8_t pic_isr_bits(void);
 
@@ -2739,7 +2761,23 @@ static uint32_t port_read_inner(uint32_t port)
         /* The ISR arm used to be a constant 0, which was harmless while nothing
            could be in service. IRQ 5 can be, and a handler that reads the ISR
            to confirm the interrupt is its own must see it. */
-        return (pic_ocw3_read == 3) ? pic_isr : pic_read_irr();
+        /* The ISR the GUEST may see: a level ARMED into the one-deep slot is
+           marked in service early (see the EOI arm below), but on the chip it
+           is only REQUESTED until INTA -- so it reads in the IRR, not here.
+           Reading it here sent DOS/16M (Doom, gwemu 2026-11-07) round an
+           IF-clear "read ISR, EOI, until ISR reads 0" flush forever: the EOI
+           rightly skipped the armed level and the ISR kept reading 0x01. */
+        if (pic_ocw3_read == 3) {
+            uint8_t v = pic_isr;
+            switch (cpu_state_ptr->hard_int_pending) {
+            case 0x08u: v &= (uint8_t)~0x01u; break;
+            case 0x09u: v &= (uint8_t)~0x02u; break;
+            case 0x0Du: v &= (uint8_t)~0x20u; break;
+            default: break;
+            }
+            return v;
+        }
+        return pic_read_irr();
     case 0x21:
         return pic_imr;
     case 0xA0:
@@ -3083,15 +3121,9 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
                    held for the 400-try fallback (Epic Pinball's flipper
                    break 2.5 s late). Measured under gwemu, 2026-11-06:
                    KBD armed isr=02, TMR armed isr=03, guest OUT 20h. */
-                uint8_t eff = pic_isr;
-                switch (cpu_state_ptr->hard_int_pending) {
-                case 0x08u: eff &= (uint8_t)~0x01u; break;
-                case 0x09u: eff &= (uint8_t)~0x02u; break;
-                case 0x0Du: eff &= (uint8_t)~0x20u; break;
-                default: break;
-                }
-                pic_isr &= (uint8_t)~(eff & (uint8_t)(0u - eff));
+                x86_pic_eoi_nonspecific();
             }
+            EVR('E', value, pic_isr | (cpu_state_ptr->hard_int_pending << 8));
             x86_sb_eois++;
         }
         break;
