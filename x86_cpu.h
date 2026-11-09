@@ -661,6 +661,13 @@ extern volatile uint32_t x86_disk_run_hist[8];     /* sectors per call        */
     (X86_DISK_WINDOW_SECTORS * 512u * X86_DISK_WINDOW_COUNT)
 int  x86_disk_cache_init(void *mem, uint32_t bytes);
 void x86_disk_cache_flush(void);
+/* SAVESTATES (src/main.c): a variable that belongs to THIS session and not to
+   the saved machine -- a host FILE *, a pointer into the AHB heap, a HAL tick
+   -- keeps its live value across a state load. Registered at init. */
+void x86_ss_keep(void *p, uint32_t bytes);
+void x86_io_ss_keep(void);
+void x86_disk_ss_keep(void);
+void x86_dos_ss_sync(void);
 extern volatile uint32_t x86_disk_cache_ok;        /* 0 = NOT backed          */
 extern volatile uint32_t x86_disk_cache_bytes;
 extern volatile uint32_t x86_disk_cache_hits;      /* sectors                 */

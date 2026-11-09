@@ -3331,3 +3331,17 @@ void x86_port_write(uint32_t port, uint32_t value, uint32_t size)
     }
     X86_PROBE_PORT(X86_PROBE_KIND_OUT, (uint16_t)port, value, unmodelled);
 }
+
+/* The core build registers for real (src/main.c); the bare-metal harness has
+   no savestates and links this. */
+__attribute__((weak, section(".text.__uc.x86_ss_keep_weak")))
+void x86_ss_keep(void *p, uint32_t bytes) { (void)p; (void)bytes; }
+
+/* SAVESTATES: the audio rings are AHB heap of THIS session (src/main.c). A
+   NULL kept here is simply re-allocated on first use. */
+X86_UC_TEXT(x86_io_ss_keep) void x86_io_ss_keep(void)
+{
+    x86_ss_keep(&spk_lv_buf, sizeof spk_lv_buf);
+    x86_ss_keep(&sb_dac_buf, sizeof sb_dac_buf);
+    x86_ss_keep(&sb_ring, sizeof sb_ring);
+}

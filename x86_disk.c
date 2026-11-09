@@ -239,6 +239,17 @@ static int (*file_write)(void *ctx, const void *src, uint32_t offset,
                          uint32_t len);
 static void *file_ctx;
 
+/* The cache windows live in the AHB heap and the backing is a host FILE:
+   both are this session's, not the saved machine's (src/main.c). */
+void x86_ss_keep(void *p, uint32_t bytes);
+__attribute__((section(".text.__uc.x86_disk_ss_keep"), noinline))
+void x86_disk_ss_keep(void)
+{
+    x86_ss_keep(&win_data, sizeof win_data);
+    x86_ss_keep(&file_ctx, sizeof file_ctx);
+    x86_ss_keep(&mem_base, sizeof mem_base);
+}
+
 void x86_disk_set_memory(const void *base, uint32_t bytes)
 {
     mem_base = (const uint8_t *)base;

@@ -79,6 +79,7 @@ SECTIONS
      CONTENTS desynchronises __CORE_CODE_END__ from the flat binary. */
   .data :
   {
+    __CORE_DATA_START__ = .;   /* savestates: the first byte of core state */
     *(.data*)
   } >RAM_EMU :data
 
