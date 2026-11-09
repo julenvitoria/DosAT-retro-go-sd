@@ -3345,3 +3345,15 @@ X86_UC_TEXT(x86_io_ss_keep) void x86_io_ss_keep(void)
     x86_ss_keep(&sb_dac_buf, sizeof sb_dac_buf);
     x86_ss_keep(&sb_ring, sizeof sb_ring);
 }
+
+/* SAVESTATES, after a load: the image may have a transfer running that this
+   session never started, so the render ring it feeds from was never
+   allocated here -- a resumed auto-init transfer then played to a NULL ring,
+   silently, for good (Epic Pinball, resumed from the launcher). Allocate it
+   now and start it empty. */
+X86_UC_TEXT(x86_io_ss_loaded) void x86_io_ss_loaded(void)
+{
+    if (!sb_ring && x86_io_alloc)
+        sb_ring = (int16_t *)x86_io_alloc(SB_RING * sizeof(int16_t));
+    sb_ring_r = sb_ring_w;
+}

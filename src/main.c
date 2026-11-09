@@ -4735,6 +4735,7 @@ X86_UC_TEXT(ss_load) static bool ss_load(const char *path)
     }
     abi->fclose(f);
 
+    x86_io_ss_loaded();
     /* The card is the truth for the .dsk: drop every cached view of it. */
     x86_disk_cache_flush();
     dsk_fs.winsect = (LBA_t)0 - 1u;
