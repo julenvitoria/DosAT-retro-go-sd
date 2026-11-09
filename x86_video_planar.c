@@ -604,6 +604,7 @@ volatile uint32_t x86_vga_readfix;
 volatile uint32_t x86_vga_readfix_reads;
 static uint8_t readfix_stage[8];
 
+static inline uint8_t *modey_flat_cell(uint32_t a);
 int x86_vga_slow_access(uint32_t lin, int write)
 {
     uint32_t a = lin - 0xA0000u;
@@ -617,9 +618,22 @@ int x86_vga_slow_access(uint32_t lin, int write)
     }
     {
         const uint32_t rm = gc[4] & 3u;
-        for (uint32_t i = 0; i < sizeof readfix_stage; i++) {
-            const uint8_t *c = vga_cell((a + i) & 0xFFFFu);
-            readfix_stage[i] = c ? c[rm] : 0u;
+        /* The flat card is contiguous within a 16 K-offset chunk, so a stage
+           that does not cross one is ONE lookup and eight strided loads.
+           Pinball Dreams reads VRAM twice as often as it writes it on a
+           table, so eight vga_cell() calls per read were most of the cost. */
+        const uint8_t *c0 = ((a & 0x3FFFu) <= 0x3FF8u) ? modey_flat_cell(a) : 0;
+        if (c0) {
+            c0 += rm;
+            readfix_stage[0] = c0[0];  readfix_stage[1] = c0[4];
+            readfix_stage[2] = c0[8];  readfix_stage[3] = c0[12];
+            readfix_stage[4] = c0[16]; readfix_stage[5] = c0[20];
+            readfix_stage[6] = c0[24]; readfix_stage[7] = c0[28];
+        } else {
+            for (uint32_t i = 0; i < sizeof readfix_stage; i++) {
+                const uint8_t *c = vga_cell((a + i) & 0xFFFFu);
+                readfix_stage[i] = c ? c[rm] : 0u;
+            }
         }
     }
     x86_vga_readfix_reads++;
@@ -1779,7 +1793,7 @@ static void hook_set(int on)
  * walking the Sequencer would otherwise reinterpret whatever mode is running as
  * planar.
  */
-void x86_vga_modey_arm(int on)
+X86_UC_TEXT(x86_vga_modey_arm) void x86_vga_modey_arm(int on)
 {
 #if X86_MODEY_CORE_NEGCTL
     (void)on;
@@ -1844,7 +1858,7 @@ void x86_vga_modey_arm(int on)
  * Returns 0 when there is no plane storage, so the mode can be REFUSED rather
  * than adopted-and-not-rendered.
  */
-int x86_vga_planar_arm(int on)
+X86_UC_TEXT(x86_vga_planar_arm) int x86_vga_planar_arm(int on)
 {
     if (!on) {
         if (!x86_vga_ega_armed)
