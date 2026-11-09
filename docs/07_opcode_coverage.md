@@ -261,7 +261,7 @@ Warning legend:
 | 89 | reached | `.op_mov_ev_gv_89` | dual | ARITH, LOGIC | - |
 | 8A | reached | `.op_mov_gb_eb_8A` | AGN | ARITH, LOGIC | REVIEW: AGN body mixes width primitives with 10 bare word op(s) |
 | 8B | reached | `.op_mov_gv_ev_8B` | dual | ARITH, LOGIC | - |
-| 8C | reached | `.op_mov_Ew_seg_8C` | AGN | - | REVIEW: AGN body mixes width primitives with 17 bare word op(s), no flag macro reachable |
+| 8C | reached | `.op_mov_Ew_seg_8C` | AGN | - | REVIEW: AGN body mixes width primitives with 18 bare word op(s), no flag macro reachable |
 | 8D | reached | `.op_lea_8D` | dual | - | no flag macro reachable |
 | 8E | reached | `.op_mov_seg_Ew_8E` | AGN | - | REVIEW: AGN body mixes width primitives with 17 bare word op(s), no flag macro reachable |
 | 8F | reached | `.op_pop_ev_8F` | dual | ARITH, LOGIC | - |
@@ -374,7 +374,7 @@ Warning legend:
 | FA | reached | `.op_cli_FA` | AGN | - | REVIEW: AGN body mixes width primitives with 4 bare word op(s), no flag macro reachable |
 | FB | reached | `.op_sti_FB` | AGN | - | REVIEW: AGN body mixes width primitives with 5 bare word op(s), no flag macro reachable |
 | FC | reached | `.op_cld_FC` | AGN | - | no flag macro reachable |
-| FD | reached | `.op_std_FD` | AGN | ARITH, INCDEC, LOGIC | REVIEW: AGN body mixes width primitives with 15 bare word op(s) |
+| FD | reached | `.op_std_FD` | AGN | ARITH, INCDEC, LOGIC | REVIEW: AGN body mixes width primitives with 19 bare word op(s) |
 | FE | reached | `.op_grp4_FE` | AGN | INCDEC | REVIEW: AGN body mixes width primitives with 3 bare word op(s) |
 | FF | reached | `.op_grp5_FF` | dual | INCDEC | - |
 

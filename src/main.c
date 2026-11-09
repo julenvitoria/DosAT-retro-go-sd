@@ -632,6 +632,7 @@ static uint32_t   rate_window_frames;
    60 fps, so every slower frame threw ticks away -- measured as ~351 of 473
    per second, with guest_ticks_dropped climbing ~100/s. 24 covers 473 Hz
    down to 20 fps and 560 Hz down to 24. */
+#define TICK_MIN_INSNS 2500u   /* see the phase plan: no closer ticks than this */
 #define TICK_IRQ_MAX          512u
 #define TICK_STALL_MS        1000u    /* longer than this is a stall, not lag */
 static uint32_t tick_acc;             /* ms * TICK_NUM, below one IRQ 0      */
@@ -4335,6 +4336,8 @@ deliver:
  * guest whose music or movement runs off INT 08h loses a beat here and how
  * often that happens is exactly what nobody could see before.
  */
+static uint32_t tick_isr_mark;          /* guest_ticks_dropped+1 when IRQ 0 got stuck */
+volatile uint32_t x86_tick_isr_forced;  /* in-service IRQ 0 cleared by the bound   */
 static void arm_tick_irq(void)
 {
     if (!tick_irqs_owed)
@@ -4347,9 +4350,30 @@ static void arm_tick_irq(void)
        its EOI, and a handler that re-enables IF before it EOIs (DOS/16M does,
        to reflect the tick to real mode) relies on exactly that. The tick stays
        OWED and goes in at the next arm after the EOI (Dark Forces, docs/13). */
-    if (x86_pic_in_service(0))
-        return;
+    if (x86_pic_in_service(0)) {
+        /* ...BOUNDED, like the keyboard's and the Sound Blaster's. A tick
+           whose handler returns without an EOI otherwise holds IRQ 0 off for
+           good, and every guest clock stops with it. Doom under DOS/4GW, once
+           DMX's timer runs at 140 Hz: three EOIs, then a tick that never got
+           one, and I_StartupTimer waited forever on a tick counter that no
+           longer moved (gwemu, 2026-11-07, about one run in two; which path
+           drops the EOI is not yet known -- docs/13). Eight ticks' worth of
+           guest time with the level held is not a handler still running. */
+        if (!tick_isr_mark) {
+            tick_isr_mark = guest_ticks_dropped + 1u;
+            return;
+        }
+        if (guest_ticks_dropped + 1u - tick_isr_mark < 8u)
+            return;
+#ifdef X86_DIAG_EVR
+        x86_evr_frozen = 1;
+#endif
+        x86_pic_eoi_level(0);
+        x86_tick_isr_forced++;
+    }
+    tick_isr_mark = 0;
     cpu_state_ptr->hard_int_pending = 0x08;
+    EVR('A', guest_ticks, cpu_state_ptr->eflags);
     x86_pic_mark_in_service(0);
     x86_pit_counter_forced(1);       /* NOT a raw store: see x86_pit_sync() */
     tick_irqs_owed--;
@@ -5020,8 +5044,23 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
         uint32_t subs, sub_slice, sub_left, phase_tail = 0;
         if (tick_phase_on) {
             uint32_t per = (slice / plan_ms) * plan_div / 1193u;
-            if (!per)
-                per = 1u;
+            /* A FLOOR ON THE TICK SPACING, in guest instructions. per is the
+               frame's budget shared out by wall time, so a frame the host
+               spent paging (or a host as slow as gwemu) packs a 140 Hz clock
+               into a few thousand instructions -- a guest whose timer handler
+               re-enables interrupts and runs services then NESTS in it. DMX
+               under Doom nested four deep and the innermost returned without
+               its EOI (gwemu, 2026-11-07). A machine that slow simply gets
+               fewer ticks: the guest's clock runs slow, which is what a slow
+               386 would have shown it anyway.
+               PROTECTED MODE ONLY. A real-mode title's handler is direct and
+               short, and the floor only cost it: Wolfenstein 3D's 700 Hz
+               AdLib clock lost ticks whenever a frame went to disk, and its
+               music hung notes at "Get Psyched!" (owner, 2026-11-08). The
+               nesting needs an extender's reflection to make the handler
+               long. */
+            if (per < TICK_MIN_INSNS && (cpu_state_ptr->cr0 & 1u))
+                per = TICK_MIN_INSNS;
             if (x86_pit_ch_mode[0] == 0u)
                 per = 0x7FFFFFFFu;      /* one-shot: nothing after the first */
             uint32_t first = tick_phase_left ? tick_phase_left : 1u;
@@ -5035,6 +5074,17 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
             if (subs > TICK_IRQ_MAX)
                 subs = TICK_IRQ_MAX;
             sub_slice = slice / subs;
+            if (sub_slice < TICK_MIN_INSNS && subs > 1u && (cpu_state_ptr->cr0 & 1u)) {
+                /* Same floor as the phase plan's (TICK_MIN_INSNS). */
+                subs = slice / TICK_MIN_INSNS;
+                if (subs < 1u)
+                    subs = 1u;
+                if (tick_irqs_owed > subs) {
+                    guest_ticks_dropped += tick_irqs_owed - subs;
+                    tick_irqs_owed = subs;
+                }
+                sub_slice = slice / subs;
+            }
             if (sub_slice == 0)
                 sub_slice = slice;
             sub_left = sub_slice;
