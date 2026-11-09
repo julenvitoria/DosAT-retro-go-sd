@@ -632,7 +632,7 @@ X86_UC_TEXT(x86_vga_crtc_preset) void x86_vga_crtc_preset(uint8_t mode)
 {
     vga_regs.crtc[0x0C] = 0;
     vga_regs.crtc[0x0D] = 0;
-    vga_regs.crtc[0x13] = (mode == 0x13) ? 0x28 : 0x14;
+    vga_regs.crtc[0x13] = (mode == 0x13 || mode == 0x0E) ? 0x28 : 0x14;
     /* The vertical registers the Mode X geometry reads (x86_vga_modex_rows,
        x86_vga_split_row), at a VGA BIOS's values: 400 scanlines, every row
        twice (0Dh: 0xC0 doubles too), Line Compare 0x3FF = no split. Left at
