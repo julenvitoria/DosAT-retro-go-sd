@@ -128,6 +128,10 @@ extern uint32_t *guest_page_table_ptr;
 
 static uint8_t *guest_ram;
 static uint8_t *guest_vram;
+/* SAVESTATES (the block above audio_pump): first byte of our DTCM. */
+X86_UC_BSS(ss_dtcm_lo) static uint32_t ss_dtcm_lo;
+static void ss_init(uint8_t load_state, int8_t save_slot);
+static void ss_frame(void);
 static char dsk_path[128];   /* /roms/dos/<name>: 256 -> 128 (2026-11-03, RAM_EMU) */
 volatile uint32_t dsk_mounted = 0;
 volatile uint32_t dsk_exec_rc = 0xFFFFFFFF;
@@ -899,6 +903,7 @@ static bool dtcm_state_init(void)
         return false;   /* loud, not silent: core_dtcm_ok stays 0 */
     }
 
+    ss_dtcm_lo = (uint32_t)(uintptr_t)mr;
     cpu_state_ptr = st;
     guest_page_table_ptr = pt;
     x86_build_mode_records(mr);
@@ -1102,13 +1107,14 @@ static void sound_cards_claim(const gw_firmware_abi_t *abi);
 
 void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
 {
-    (void)load_state; (void)start_paused; (void)save_slot;
+    (void)start_paused;
 
     ram_start = (uint32_t)&__CORE_BSS_END__;
     core_magic = CORE_MAGIC;      /* we are alive and this is our RAM_EMU */
     itcm_sum_entry = itcm_sum();
     itcm_byte_120_entry = itcm_byte_120();
     odroid_system_init(APP_ID, SAMPLE_RATE);
+    ss_init(load_state, save_slot);
 
     CoreDebug_DEMCR |= (1 << 24);
     DWT_CYCCNT = 0;
@@ -4483,6 +4489,289 @@ static uint32_t audio_frames;       /* samples per half, set at audio start */
 static uint32_t audio_dma_last;
 static int      audio_dma_seen;
 
+/* ====================================================================== *
+ * SAVESTATES -- the whole machine, as the bytes it lives in.
+ *
+ * Retro-Go owns the menu, the slots and the file names; it calls
+ * ss_save()/ss_load() with a path (odroid_system_emu_init below). What a slot
+ * holds is not a list of devices: it is every byte of core-owned RAM, taken
+ * while the guest is stopped between frames, plus the pagefile pages and the
+ * XMS store that only exist on the card.
+ *
+ *   B  RAM_EMU .data+.bss         core statics: every device, the DOS HLE,
+ *                                 the pager's books, FatFs over the .dsk
+ *   C  RAM_EMU above the bss      guest frames, OPL state, the pool's tenants
+ *   A  RAM_UC bss + bonus pool    the arena (VGA planes, CGA, DAC), UC state
+ *   D  DTCM, ours                 CPU state, fold table, pager table, aperture
+ *   P  live pagefile slots        guest pages that were evicted to the card
+ *   X  the XMS store (8 MB+)      extended memory, which is ONLY on the card
+ *
+ * THE SAME BUILD, THE SAME LAYOUT, OR NOTHING. Pointers inside the image are
+ * absolute; the header carries the region table and the ITCM checksum, and a
+ * load that does not match both is refused before a byte is written. A .cfg
+ * that changes an allocation (vga_pages, sound cards) changes the layout and
+ * is refused the same way.
+ *
+ * A FEW BYTES ARE THIS SESSION'S, NOT THE MACHINE'S: host FILE *s, pointers
+ * into the AHB heap, HAL millisecond stamps. They register with x86_ss_keep()
+ * and keep their live value across the load. The disk cache and the FatFs
+ * window are then invalidated, because the .dsk on the card is newer than
+ * neither (guest files are synced before every save).
+ *
+ * Refused while the Cold RAM->NOR snapshot is attached: those guest pages live
+ * in external flash, which is not saved.
+ */
+extern char __CORE_DATA_START__[], __RAM_EMU_END__[];
+extern char __CORE_RAM_UC_CODE_END__[], __RAM_UC_CORE_END__[];
+
+#define SS_MAGIC     "DOSATSS1"
+#define SS_VERSION   1u
+#define SS_NREG      4u
+#define SS_KEEP_MAX  24u
+#define SS_KEEP_BYTES 192u
+
+typedef struct { uint32_t addr, len; } ss_region_t;
+typedef struct {
+    char        magic[8];
+    uint32_t    version, hdr_bytes;
+    uint32_t    sig_itcm, sig_code_end;
+    ss_region_t reg[SS_NREG];
+    uint32_t    pgf_slots;          /* (u32 slot, 4 KB) records after the regions */
+    uint32_t    xms_bytes;          /* then the XMS store from 8 MB             */
+    uint32_t    reserved[6];
+} ss_hdr_t;
+
+X86_UC_BSS(ss_keep) static struct { void *p; uint32_t n; } ss_keep_tab[SS_KEEP_MAX];
+X86_UC_BSS(ss_keep_n) static uint32_t ss_keep_n;
+X86_UC_BSS(ss_boot) static int8_t ss_boot_slot;
+X86_UC_BSS(ss_boot_pending) static uint8_t ss_boot_pending;
+X86_UC_BSS(x86_ss_counters) volatile uint32_t x86_ss_saves, x86_ss_loads, x86_ss_refused, x86_ss_errors;
+
+X86_UC_TEXT(x86_ss_keep) void x86_ss_keep(void *p, uint32_t bytes)
+{
+    if (ss_keep_n < SS_KEEP_MAX)
+        ss_keep_tab[ss_keep_n++] = (typeof(ss_keep_tab[0])){ p, bytes };
+}
+
+X86_UC_TEXT(ss_regions) static void ss_regions(ss_region_t *r)
+{
+    r[0].addr = (uint32_t)__CORE_DATA_START__;
+    r[0].len  = (uint32_t)&__CORE_BSS_END__ - r[0].addr;
+    r[1].addr = (uint32_t)&__CORE_BSS_END__;
+    r[1].len  = (uint32_t)__RAM_EMU_END__ - r[1].addr;
+    r[2].addr = (uint32_t)__CORE_RAM_UC_CODE_END__;
+    r[2].len  = (uint32_t)__RAM_UC_CORE_END__ - r[2].addr;
+    r[3].addr = ss_dtcm_lo;
+    r[3].len  = (ss_dtcm_lo && core_dtcm_next > ss_dtcm_lo)
+              ? core_dtcm_next + 4u - ss_dtcm_lo : 0u;
+}
+
+/* One pagefile slot or XMS run through the live handle. */
+X86_UC_TEXT(ss_pgf_io) static int ss_pgf_io(uint32_t off, void *buf, uint32_t n, int wr)
+{
+    const gw_firmware_abi_t *abi = gw_firmware_abi();
+    FILE *f = pgf_file();
+    if (!f || abi->fseek(f, (long)off, SEEK_SET) != 0)
+        return -1;
+    return (wr ? abi->fwrite(buf, 1, n, f) : abi->fread(buf, 1, n, f)) == n ? 0 : -1;
+}
+
+X86_UC_TEXT(ss_save) static bool ss_save(const char *path)
+{
+    const gw_firmware_abi_t *abi = gw_firmware_abi();
+    ss_hdr_t h;
+    uint8_t buf[1024];
+    FILE *f;
+    bool ok = false;
+
+    if (!path || !core_ready || x86_nor_attached) {
+        x86_ss_refused++;
+        return false;
+    }
+    x86_dos_ss_sync();                   /* the .dsk on the card is current */
+
+    memset(&h, 0, sizeof h);
+    memcpy(h.magic, SS_MAGIC, 8);
+    h.version = SS_VERSION;
+    h.hdr_bytes = sizeof h;
+    h.sig_itcm = itcm_sum_entry;
+    h.sig_code_end = (uint32_t)__CORE_DATA_START__;
+    ss_regions(h.reg);
+    for (uint32_t s = 0; s < X86_PGF_RING_SLOTS; s++)
+        if (x86_pgf_slot_live(s))
+            h.pgf_slots++;
+    if (pgf_high_water > XMS_FILE_BASE)
+        h.xms_bytes = pgf_high_water - XMS_FILE_BASE;
+
+    f = abi->fopen(path, "wb");
+    if (!f) { x86_ss_errors++; return false; }
+    if (abi->fwrite(&h, 1, sizeof h, f) != sizeof h)
+        goto out;
+    for (unsigned i = 0; i < SS_NREG; i++)
+        if (h.reg[i].len && abi->fwrite((const void *)h.reg[i].addr, 1,
+                                        h.reg[i].len, f) != h.reg[i].len)
+            goto out;
+    for (uint32_t s = 0; s < X86_PGF_RING_SLOTS; s++) {
+        if (!x86_pgf_slot_live(s))
+            continue;
+        if (abi->fwrite(&s, 1, 4, f) != 4)
+            goto out;
+        for (uint32_t o = 0; o < X86_PG_SIZE; o += sizeof buf)
+            if (ss_pgf_io(s * X86_PG_SIZE + o, buf, sizeof buf, 0) != 0
+                || abi->fwrite(buf, 1, sizeof buf, f) != sizeof buf)
+                goto out;
+    }
+    for (uint32_t o = 0; o < h.xms_bytes; o += sizeof buf) {
+        uint32_t n = h.xms_bytes - o < sizeof buf ? h.xms_bytes - o : sizeof buf;
+        memset(buf, 0, n);
+        (void)ss_pgf_io(XMS_FILE_BASE + o, buf, n, 0);   /* sparse: short = 0s */
+        if (abi->fwrite(buf, 1, n, f) != n)
+            goto out;
+    }
+    ok = true;
+out:
+    abi->fclose(f);
+    if (ok) x86_ss_saves++; else x86_ss_errors++;
+    return ok;
+}
+
+X86_UC_TEXT(ss_load) static bool ss_load(const char *path)
+{
+    const gw_firmware_abi_t *abi = gw_firmware_abi();
+    ss_hdr_t h;
+    ss_region_t cur[SS_NREG];
+    struct { void *p; uint32_t n; } keep[SS_KEEP_MAX];
+    uint8_t kept[SS_KEEP_BYTES];
+    uint8_t buf[1024];
+    uint32_t nkeep, used = 0;
+    FILE *f;
+
+    if (!path || !core_ready || x86_nor_attached) {
+        x86_ss_refused++;
+        return false;
+    }
+    f = abi->fopen(path, "rb");
+    if (!f) { x86_ss_errors++; return false; }
+    ss_regions(cur);
+    if (abi->fread(&h, 1, sizeof h, f) != sizeof h
+        || memcmp(h.magic, SS_MAGIC, 8) != 0 || h.version != SS_VERSION
+        || h.hdr_bytes != sizeof h || h.sig_itcm != itcm_sum_entry
+        || h.sig_code_end != (uint32_t)__CORE_DATA_START__
+        || memcmp(h.reg, cur, sizeof cur) != 0) {
+        /* Another build, another .cfg: nothing has been touched yet. */
+        abi->fclose(f);
+        x86_ss_refused++;
+        return false;
+    }
+
+    /* This session's values, onto the stack before the image lands. */
+    nkeep = ss_keep_n;
+    memcpy(keep, ss_keep_tab, sizeof keep);
+    for (uint32_t i = 0; i < nkeep; i++) {
+        if (used + keep[i].n > sizeof kept) { nkeep = i; break; }
+        memcpy(kept + used, keep[i].p, keep[i].n);
+        used += keep[i].n;
+    }
+    FILE *live_dsk = dsk_fp, *live_dsk2 = dsk_fp2, *live_pgf = pgf_fp;
+    dsk_menu_t *live_menu = dsk_menu;
+    uint32_t live_tick = tick_last_ms, live_rate = rate_window_ms;
+    uint32_t live_adma = audio_dma_last, live_frames = audio_frames;
+    int live_aseen = audio_dma_seen;
+
+    /* PAST THIS POINT A SHORT READ LEAVES A HALF-LOADED MACHINE. The header
+       matched, so the file is ours and whole unless the card failed. */
+    bool ok = true;
+    for (unsigned i = 0; i < SS_NREG && ok; i++)
+        if (h.reg[i].len && abi->fread((void *)h.reg[i].addr, 1, h.reg[i].len, f)
+                            != h.reg[i].len)
+            ok = false;
+
+    dsk_fp = live_dsk; dsk_fp2 = live_dsk2; pgf_fp = live_pgf;
+    dsk_menu = live_menu;
+    tick_last_ms = live_tick; rate_window_ms = live_rate;
+    audio_dma_last = live_adma; audio_frames = live_frames; audio_dma_seen = live_aseen;
+    used = 0;
+    for (uint32_t i = 0; i < nkeep; i++) {
+        memcpy(keep[i].p, kept + used, keep[i].n);
+        used += keep[i].n;
+    }
+
+    for (uint32_t k = 0; k < h.pgf_slots && ok; k++) {
+        uint32_t s;
+        if (abi->fread(&s, 1, 4, f) != 4 || s >= X86_PGF_RING_SLOTS) { ok = false; break; }
+        for (uint32_t o = 0; o < X86_PG_SIZE && ok; o += sizeof buf)
+            if (abi->fread(buf, 1, sizeof buf, f) != sizeof buf
+                || ss_pgf_io(s * X86_PG_SIZE + o, buf, sizeof buf, 1) != 0)
+                ok = false;
+    }
+    for (uint32_t o = 0; o < h.xms_bytes && ok; o += sizeof buf) {
+        uint32_t n = h.xms_bytes - o < sizeof buf ? h.xms_bytes - o : sizeof buf;
+        if (abi->fread(buf, 1, n, f) != n || ss_pgf_io(XMS_FILE_BASE + o, buf, n, 1) != 0)
+            ok = false;
+    }
+    abi->fclose(f);
+
+    /* The card is the truth for the .dsk: drop every cached view of it. */
+    x86_disk_cache_flush();
+    dsk_fs.winsect = (LBA_t)0 - 1u;
+    dsk_fs.wflag = 0;
+    dsk_fs.free_clst = 0xFFFFFFFFu;
+    /* What the panel and the LTDC hold is this session's too. */
+    x86_video_refresh_palette();
+    cga_clut_dirty = 1;
+    tick_acc = 0;
+    tick_irqs_owed = 0;
+
+    if (ok) x86_ss_loads++; else x86_ss_errors++;
+    return ok;
+}
+
+/* Probe hook: a harness writes 1 (save) or 2 (load) and a path index; the
+   frame loop runs it at the top of the next frame. */
+X86_UC_BSS(x86_ss_request) volatile uint32_t x86_ss_request;
+X86_UC_BSS(ss_test_load_at) static uint32_t ss_test_load_at;
+__attribute__((section(".text.__uc.ss_test_path"))) static const char ss_test_path[] = "/roms/dos/dosat_ss_test.sav";
+
+X86_UC_TEXT(ss_frame) static void ss_frame(void)
+{
+    if (ss_boot_pending && frames_rendered > 0u) {
+        ss_boot_pending = 0;
+        (void)gw_firmware_abi()->odroid_system_emu_load_state(ss_boot_slot);
+    }
+    if (x86_ss_request) {
+        uint32_t r = x86_ss_request;
+        x86_ss_request = 0;
+        if (r == 1u || r == 3u) (void)ss_save(ss_test_path);
+        else if (r == 2u) (void)ss_load(ss_test_path);
+        if (r == 3u)                    /* save, then load it 120 frames on */
+            ss_test_load_at = frames_rendered + 120u;
+    }
+    if (ss_test_load_at && frames_rendered >= ss_test_load_at) {
+        ss_test_load_at = 0;
+        (void)ss_load(ss_test_path);
+    }
+}
+
+
+/* Once, from app_main: the callbacks, the per-module keep lists, and a state
+   to load after the first frame when the launcher asked to resume. */
+X86_UC_TEXT(ss_init) static void ss_init(uint8_t load_state, int8_t save_slot)
+{
+    /* RAM_UC .bss is NOLOAD and nothing promises it is zeroed. */
+    ss_keep_n = 0;
+    ss_boot_pending = 0;
+    ss_test_load_at = 0;
+    x86_ss_request = 0;
+    x86_ss_saves = x86_ss_loads = x86_ss_refused = x86_ss_errors = 0;
+    odroid_system_emu_init(ss_load, ss_save, NULL, NULL, NULL, NULL, NULL);
+    x86_io_ss_keep();
+    x86_disk_ss_keep();
+    if (load_state) {
+        ss_boot_slot = save_slot;
+        ss_boot_pending = 1;
+    }
+}
+
 static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)
 {
     if (abi->dma_counter_ptr) {
@@ -4771,6 +5060,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
             tick_irqs_owed = 0;
         }
 
+        ss_frame();
         uint32_t frame_start_ms = abi->HAL_GetTick();
 
         FRAME_PHASE(X86_PHASE_INPUT);

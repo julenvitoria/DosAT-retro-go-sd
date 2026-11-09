@@ -426,6 +426,15 @@ static int handle_alloc(void)
     return -1;
 }
 
+/* SAVESTATES: every open guest file onto the card before the image is taken,
+   so the .dsk on the SD and the FatFs state in the image agree. */
+X86_UC_TEXT(x86_dos_ss_sync) void x86_dos_ss_sync(void)
+{
+    for (unsigned i = 0; i < DOS_MAX_FILES; i++)
+        if (dos_file_used[i])
+            (void)f_sync(&dos_files[i]);
+}
+
 static FIL *handle_get(uint16_t h)
 {
     if (h < 5 || h - 5 >= DOS_MAX_FILES)
