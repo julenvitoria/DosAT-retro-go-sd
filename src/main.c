@@ -4566,21 +4566,37 @@ X86_UC_TEXT(ss_regions) static void ss_regions(ss_region_t *r)
               ? core_dtcm_next + 4u - ss_dtcm_lo : 0u;
 }
 
-/* One pagefile slot or XMS run through the live handle. */
-X86_UC_TEXT(ss_pgf_io) static int ss_pgf_io(uint32_t off, void *buf, uint32_t n, int wr)
+/* Position the live pagefile handle (opening it if the pager has not yet). */
+X86_UC_TEXT(ss_pgf_seek) static int ss_pgf_seek(uint32_t off)
 {
     const gw_firmware_abi_t *abi = gw_firmware_abi();
     FILE *f = pgf_file();
-    if (!f || abi->fseek(f, (long)off, SEEK_SET) != 0)
-        return -1;
-    return (wr ? abi->fwrite(buf, 1, n, f) : abi->fread(buf, 1, n, f)) == n ? 0 : -1;
+    abi->wdog_refresh();
+    return (f && abi->fseek(f, (long)off, SEEK_SET) == 0) ? 0 : -1;
+}
+
+/* In 8 KB pieces with the watchdog fed between them: the WWDG window is
+   ~470 ms and a 650 KB region in one call is seconds on the card. */
+X86_UC_TEXT(ss_xfer) static bool ss_xfer(FILE *f, void *p, uint32_t n, int wr)
+{
+    const gw_firmware_abi_t *abi = gw_firmware_abi();
+    uint8_t *b = (uint8_t *)p;
+    while (n) {
+        uint32_t k = n < 8192u ? n : 8192u;
+        abi->wdog_refresh();
+        if ((wr ? abi->fwrite(b, 1, k, f) : abi->fread(b, 1, k, f)) != k)
+            return false;
+        b += k;
+        n -= k;
+    }
+    return true;
 }
 
 X86_UC_TEXT(ss_save) static bool ss_save(const char *path)
 {
     const gw_firmware_abi_t *abi = gw_firmware_abi();
     ss_hdr_t h;
-    uint8_t buf[1024];
+    uint8_t buf[2048];
     FILE *f;
     bool ok = false;
 
@@ -4608,23 +4624,28 @@ X86_UC_TEXT(ss_save) static bool ss_save(const char *path)
     if (abi->fwrite(&h, 1, sizeof h, f) != sizeof h)
         goto out;
     for (unsigned i = 0; i < SS_NREG; i++)
-        if (h.reg[i].len && abi->fwrite((const void *)h.reg[i].addr, 1,
-                                        h.reg[i].len, f) != h.reg[i].len)
+        if (h.reg[i].len && !ss_xfer(f, (void *)h.reg[i].addr, h.reg[i].len, 1))
             goto out;
     for (uint32_t s = 0; s < X86_PGF_RING_SLOTS; s++) {
         if (!x86_pgf_slot_live(s))
             continue;
-        if (abi->fwrite(&s, 1, 4, f) != 4)
+        if (abi->fwrite(&s, 1, 4, f) != 4 || ss_pgf_seek(s * X86_PG_SIZE) != 0)
             goto out;
         for (uint32_t o = 0; o < X86_PG_SIZE; o += sizeof buf)
-            if (ss_pgf_io(s * X86_PG_SIZE + o, buf, sizeof buf, 0) != 0
+            if (abi->fread(buf, 1, sizeof buf, pgf_fp) != sizeof buf
                 || abi->fwrite(buf, 1, sizeof buf, f) != sizeof buf)
                 goto out;
     }
+    /* The XMS store in one sequential pass: with FF_USE_FASTSEEK 0 every
+       seek walks the cluster chain from byte zero. */
+    if (h.xms_bytes && ss_pgf_seek(XMS_FILE_BASE) != 0)
+        goto out;
     for (uint32_t o = 0; o < h.xms_bytes; o += sizeof buf) {
         uint32_t n = h.xms_bytes - o < sizeof buf ? h.xms_bytes - o : sizeof buf;
-        memset(buf, 0, n);
-        (void)ss_pgf_io(XMS_FILE_BASE + o, buf, n, 0);   /* sparse: short = 0s */
+        uint32_t got = (uint32_t)abi->fread(buf, 1, n, pgf_fp);
+        if (got < n)
+            memset(buf + got, 0, n - got);      /* sparse: unwritten = 0s */
+        abi->wdog_refresh();
         if (abi->fwrite(buf, 1, n, f) != n)
             goto out;
     }
@@ -4642,7 +4663,7 @@ X86_UC_TEXT(ss_load) static bool ss_load(const char *path)
     ss_region_t cur[SS_NREG];
     struct { void *p; uint32_t n; } keep[SS_KEEP_MAX];
     uint8_t kept[SS_KEEP_BYTES];
-    uint8_t buf[1024];
+    uint8_t buf[2048];
     uint32_t nkeep, used = 0;
     FILE *f;
 
@@ -4682,8 +4703,7 @@ X86_UC_TEXT(ss_load) static bool ss_load(const char *path)
        matched, so the file is ours and whole unless the card failed. */
     bool ok = true;
     for (unsigned i = 0; i < SS_NREG && ok; i++)
-        if (h.reg[i].len && abi->fread((void *)h.reg[i].addr, 1, h.reg[i].len, f)
-                            != h.reg[i].len)
+        if (h.reg[i].len && !ss_xfer(f, (void *)h.reg[i].addr, h.reg[i].len, 0))
             ok = false;
 
     dsk_fp = live_dsk; dsk_fp2 = live_dsk2; pgf_fp = live_pgf;
@@ -4698,15 +4718,19 @@ X86_UC_TEXT(ss_load) static bool ss_load(const char *path)
 
     for (uint32_t k = 0; k < h.pgf_slots && ok; k++) {
         uint32_t s;
-        if (abi->fread(&s, 1, 4, f) != 4 || s >= X86_PGF_RING_SLOTS) { ok = false; break; }
+        if (abi->fread(&s, 1, 4, f) != 4 || s >= X86_PGF_RING_SLOTS
+            || ss_pgf_seek(s * X86_PG_SIZE) != 0) { ok = false; break; }
         for (uint32_t o = 0; o < X86_PG_SIZE && ok; o += sizeof buf)
             if (abi->fread(buf, 1, sizeof buf, f) != sizeof buf
-                || ss_pgf_io(s * X86_PG_SIZE + o, buf, sizeof buf, 1) != 0)
+                || abi->fwrite(buf, 1, sizeof buf, pgf_fp) != sizeof buf)
                 ok = false;
     }
+    if (ok && h.xms_bytes && ss_pgf_seek(XMS_FILE_BASE) != 0)
+        ok = false;
     for (uint32_t o = 0; o < h.xms_bytes && ok; o += sizeof buf) {
         uint32_t n = h.xms_bytes - o < sizeof buf ? h.xms_bytes - o : sizeof buf;
-        if (abi->fread(buf, 1, n, f) != n || ss_pgf_io(XMS_FILE_BASE + o, buf, n, 1) != 0)
+        abi->wdog_refresh();
+        if (abi->fread(buf, 1, n, f) != n || abi->fwrite(buf, 1, n, pgf_fp) != n)
             ok = false;
     }
     abi->fclose(f);
