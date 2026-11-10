@@ -3281,6 +3281,7 @@ OP_AGNOSTIC .op_in_al_imm8_E4
 L(DO_IN_B):
     CHECK_IOPL R2, R3
     MOV.W R1, #1
+    STR.W R10, [R8, #CPU_IO_EIP]   @ next insn, for x86_retrace_skip()
     BL x86_port_read
     STRB.W R0, [R8, #REG_EAX]
     B.W .fetch_decode_loop

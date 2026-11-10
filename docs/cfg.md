@@ -32,7 +32,7 @@ igual.
 
 | Clave | Valores | Qué hace |
 |---|---|---|
-| `cycles` | `max`, o un número | Velocidad de la CPU en miles de instrucciones por segundo, como en DOSBox. Se redondea al perfil más cercano de la tabla de abajo. |
+| `cycles` | `max`, o un número | Velocidad de la CPU en miles de instrucciones por segundo, como en DOSBox. Se redondea al perfil más cercano de la tabla de abajo, salvo con `[video] vsync_lock = 1`: entonces se usa el número exacto (por ejemplo `1800`), hasta que elijas otro perfil en el menú. |
 | `cpu_profile` | `0` … `5` | El perfil por su número, directamente. |
 
 Perfiles (los mismos que el menú de retro-go, PAUSE/SET → CPU Speed):
@@ -104,6 +104,7 @@ cuelgan o suenan mal con una de ellas.
 | `vga_pages` | `0` a `3` | Memoria de vídeo extra para los juegos que usan el modo VGA «sin encadenar» (Mode X/Y). Sin la clave vale `1`, que va bien para casi todos. `2` le da tres pantallas completas (Wolfenstein 3D), a cambio de algo de memoria del juego. `3` es para los juegos que **desplazan la pantalla por toda la memoria de vídeo**, como **Epic Pinball**: sin ella la mesa sale doble, con rayas negras o en negro por abajo. |
 | `vga_hz` | `50` a `75` | Frecuencia del retrazado vertical que ve el juego. Sin la clave vale `70`, como una VGA real. La pantalla va a 60 Hz: con `60`, un juego que dibuja un fotograma por retrazado (Epic Pinball) se mueve más uniforme, pero va un poco más lento. |
 | `vsync_lock` | `0` o `1` | Con `1`, cada refresco de la pantalla lleva exactamente un retrazado del juego, sin desfase: el movimiento queda uniforme del todo. Sin la clave vale `0`. Solo funciona con una velocidad fija en `[cpu] cycles` (no con `max`) y con `vga_hz = 60`. Ejemplo para **Pinball Dreams**: `cycles = 1000`, `vga_hz = 60`, `vsync_lock = 1`. |
+| `retrace_skip` | `0` o `1` | Con `1`, cuando el juego se queda en un bucle esperando el retrazado vertical, el núcleo salta esa espera en vez de ejecutarla: al juego le parece que el tiempo ha pasado, pero no gasta CPU. Sirve para juegos que se pasan buena parte de cada fotograma esperando, como **Pinball Dreams 2**, y permite darles una velocidad más alta en `[cpu] cycles`. Sin la clave vale `0`. Solo funciona con una velocidad fija (no con `max`). |
 
 Si la pones, el núcleo no le quita esa memoria aunque el juego vaya justo de
 RAM: has elegido la imagen para ese juego. Si un juego carga más lento con

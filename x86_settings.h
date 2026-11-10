@@ -208,6 +208,16 @@ typedef enum {
      */
     X86_SET_VSYNC_LOCK = 9,
 
+    /*
+     * `[video] retrace_skip`: 1 fast-forwards guest time over the exact loop
+     * `in al,dx / test al,8 / jz|jnz back` on 0x3DA instead of executing it
+     * (x86_io.c, retrace_skip_run). The loop costs nothing, so a paced rate
+     * high enough for a title that burns most of each frame waiting for the
+     * retrace becomes affordable: Pinball Dreams 2 spins in its INT 08h for
+     * ~70% of a frame. Needs a paced `cycles` (not max). Default 0.
+     */
+    X86_SET_RETRACE_SKIP = 10,
+
     X86_SET_COUNT
 } x86_setting_id_t;
 

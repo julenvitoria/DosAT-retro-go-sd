@@ -244,6 +244,11 @@ struct X86CPUState {
        stack, 0 for a BIG (B=1) one. The stack address size is SS's, not the
        code's. Must be 0xFFFF0000 after every reset -- x86_cpu_reset_sp(). */
     uint32_t sp_wrap;
+    /* Linear EIP just past a byte IN (L(DO_IN_B)), i.e. the NEXT instruction,
+       so `[video] retrace_skip` can recognise `in al,dx / test al,8 / jcc
+       back` from inside x86_port_read. Its bytes resolve through code_k: the
+       dispatch proved the IN within 0xFF0 of its granule's end. */
+    uint32_t io_eip;
 };
 typedef struct X86CPUState X86CPUState;
 #define X86_SP_WRAP_16 0xFFFF0000u
