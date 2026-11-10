@@ -3154,9 +3154,17 @@ static void sound_cards_claim(const gw_firmware_abi_t *abi)
 /* The same two keys, applied from settings_load() once the .cfg is parsed for
    real. On the dynamic build this only confirms what sound_cards_claim()
    already did; on the static one it is the whole job. */
+/* `[video] vsync_lock` (x86_settings.h). Host-writable, so the effect can be
+   A/B'd live with probe.py --set on a running title. In RAM_UC with the cold
+   logs: 8 B more of RAM_EMU is over tests/budgets.json, and a once-a-frame
+   read does not need the cached segment. */
+X86_UC_BSS(x86_vsync_lock) volatile uint32_t x86_vsync_lock;
+X86_UC_BSS(x86_vsync_lock_slices) volatile uint32_t x86_vsync_lock_slices;
+
 static void sound_cards_apply(void)
 {
     x86_vga_set_hz((unsigned)x86_settings_get(X86_SET_VGA_HZ));
+    x86_vsync_lock = (uint32_t)x86_settings_get(X86_SET_VSYNC_LOCK);
     x86_sb_enabled = (uint8_t)(x86_settings_get(X86_SET_SB) != 0);
     if (!x86_settings_get(X86_SET_OPL))
         x86_opl_set_mem(NULL);
@@ -5261,6 +5269,27 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                     slice = kips;              /* always make a millisecond's
                                                   worth of progress */
                 guest_insn_debt = debt;
+
+                /* vsync_lock: run to the end of the next retrace instead of
+                   kips x whole ms. Aimed at a PHASE, not a count, so a slice
+                   cut short (a PIT reload, an IRQ) is made up next frame
+                   rather than drifting. Under half a frame away means this
+                   iteration's retrace is already behind us: take the next.
+                   Paced only -- at Max the real-time clock is the rate of the
+                   frame before, so there is no phase to aim at. The debt is
+                   cleared: the panel paces this mode, and a backlog paid out
+                   would be a second guest frame in one panel frame. */
+                if (x86_vsync_lock) {
+                    uint32_t frame;
+                    uint32_t ticks = x86_vga_ticks_to_frame_end(&frame);
+                    if (ticks < frame / 2u)
+                        ticks += frame;
+                    /* pit_rt runs 1193 ticks per kips instructions; ticks <=
+                       1.5 x 23,864 and kips <= 100,000 keep this in 32 bits. */
+                    slice = (ticks * kips + 1192u) / 1193u;
+                    guest_insn_debt = 0;
+                    x86_vsync_lock_slices++;
+                }
             }
             /* The ceiling is what actually FITS in a display period.
                GUEST_SLICE_MAX_MS bounds the slice in the EMULATED machine's

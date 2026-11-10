@@ -49,6 +49,7 @@ uint8_t *x86_vga_attr_regs(void);           /* the same, writable (INT 10h)    *
 void x86_vga_crtc_preset(uint8_t mode);
 /* The emulated vertical retrace rate, 50..75 Hz (`[video] vga_hz`). */
 void x86_vga_set_hz(unsigned hz);
+uint32_t x86_vga_ticks_to_frame_end(uint32_t *frame);   /* vsync_lock */
 
 /* ---- register writes with an effect, fed from x86_io.c ------------------- */
 
