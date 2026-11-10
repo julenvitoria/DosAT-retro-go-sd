@@ -110,6 +110,9 @@ static const x86_setting_desc_t x86_setting_desc[X86_SET_COUNT] = {
 
     /* vsync_lock: one guest frame per panel frame (paced cycles only). */
     { "vsync_lock",   0, 0, 1 },
+
+    /* retrace_skip: the 0x3DA retrace spin costs no host time (paced only). */
+    { "retrace_skip", 0, 0, 1 },
 };
 
 /* String rows. Separate from the table above because they are .cfg-only and

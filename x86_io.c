@@ -509,6 +509,66 @@ uint32_t x86_vga_ticks_to_frame_end(uint32_t *frame)
     *frame = VGA_FRAME_TICKS;
     return VGA_FRAME_TICKS - pit_rt % VGA_FRAME_TICKS;
 }
+
+/*
+ * `[video] retrace_skip` (x86_settings.h): a guest spinning on the vertical
+ * retrace bit is fast-forwarded to the edge it waits for, instead of paying
+ * for every turn of the loop. Pinball Dreams 2's INT 08h waits for the retrace
+ * START inside the handler, interrupts on, for ~70% of each frame (measured on
+ * silicon 2026-11-10): at a paced 1000 kips that left its game ~4,300
+ * instructions a frame, and no affordable rate gave it a 386's ~19,500.
+ *
+ * ONLY the exact loop `in al,dx / test al,8 (or and al,8) / jz|jnz back` --
+ * read off the bytes after the IN, through the opcode granule's code_k -- so
+ * a loop counting HORIZONTAL blanks (Pinball Fantasies' raster calibration,
+ * Keen's hblank waits) is never touched.
+ *
+ * The skip CONSUMES the instructions the loop would have run, from
+ * pit_counter, exactly as if they had executed: x86_pit_sync() then advances
+ * every clock that hangs off it (PIT counters, the beam, OPL timers, speaker
+ * stamps) together, and the frame loop sees its budget spent. It never goes
+ * past the next planned stop (pit_counter is left at 1 at least), so an IRQ
+ * or a sub-slice end lands exactly where it would have. Paced only: at Max
+ * the real-time clock IS the measured instruction rate, so instructions that
+ * were never run would inflate it.
+ */
+X86_UC_BSS(x86_retrace_skip) volatile uint32_t x86_retrace_skip;
+X86_UC_BSS(x86_retrace_skips) volatile uint32_t x86_retrace_skips;
+X86_UC_BSS(x86_retrace_skip_insns) volatile uint32_t x86_retrace_skip_insns;
+
+X86_UC_TEXT(retrace_skip_run) static void retrace_skip_run(void)
+{
+    if (!x86_pit_kips || !x86_pit_rt_kips)
+        return;                                   /* Max: see above */
+    const uint8_t *p = (const uint8_t *)x86_fold_ptr(cpu_state_ptr->io_eip,
+                                                     cpu_state_ptr->code_k);
+    if (!((p[0] == 0xA8u || p[0] == 0x24u) && p[1] == 0x08u &&
+          (p[2] == 0x74u || p[2] == 0x75u) && p[3] == 0xFBu))
+        return;                                   /* not THE retrace spin */
+    uint32_t cnt = cpu_state_ptr->pit_counter;
+    if (cnt <= 1u)
+        return;                                   /* a stop is due now */
+    x86_pit_sync();
+    uint32_t frame = VGA_FRAME_TICKS;
+    uint32_t vr0 = frame - VGA_VRETRACE_TICKS;
+    uint32_t pos = pit_rt % frame;
+    uint32_t ticks;
+    if (p[2] == 0x74u)                            /* jz: waits for the START */
+        ticks = pos < vr0 ? vr0 - pos : 0u;
+    else                                          /* jnz: waits for the END  */
+        ticks = pos >= vr0 ? frame - pos : 0u;
+    if (!ticks)
+        return;
+    /* pit_rt runs 1193 ticks per x86_pit_rt_kips instructions; rounded UP so
+       the next read is past the edge. ticks <= 23,864 and kips <= 100,000
+       keep this in 32 bits. */
+    uint32_t k = (ticks * x86_pit_rt_kips + 1192u) / 1193u;
+    if (k > cnt - 1u)
+        k = cnt - 1u;
+    cpu_state_ptr->pit_counter = cnt - k;
+    x86_retrace_skips++;
+    x86_retrace_skip_insns += k;
+}
 #define VGA_LINE_TICKS      38u
 #define VGA_HBLANK_TICKS    6u
 #define VGA_CRTC_REGS  32
@@ -2976,6 +3036,8 @@ static uint32_t port_read_inner(uint32_t port)
          * so the retrace now comes when a real card's would.
          */
         if (cpu_state_ptr->pit_reload) {
+            if (x86_retrace_skip)
+                retrace_skip_run();
             uint32_t t = x86_pit_ticks();       /* also syncs pit_rt */
             if (pit_rt % VGA_FRAME_TICKS >= VGA_FRAME_TICKS - VGA_VRETRACE_TICKS)
                 return 0x08u | 0x01u;           /* vertical retrace */

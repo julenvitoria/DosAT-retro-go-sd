@@ -3165,6 +3165,7 @@ static void sound_cards_apply(void)
 {
     x86_vga_set_hz((unsigned)x86_settings_get(X86_SET_VGA_HZ));
     x86_vsync_lock = (uint32_t)x86_settings_get(X86_SET_VSYNC_LOCK);
+    x86_retrace_skip = (uint32_t)x86_settings_get(X86_SET_RETRACE_SKIP);
     x86_sb_enabled = (uint8_t)(x86_settings_get(X86_SET_SB) != 0);
     if (!x86_settings_get(X86_SET_OPL))
         x86_opl_set_mem(NULL);
@@ -3472,6 +3473,24 @@ static void cpu_profile_init(const gw_firmware_abi_t *abi)
        rungs there are. cpu_profile_apply() clamps a bad index to 0 rather than
        indexing off the end of two arrays. */
     cpu_profile_apply(idx);
+
+    /* vsync_lock titles get the .cfg's `cycles` EXACTLY, not the nearest
+       rung: the lock sizes every slice from this number, and the rate that
+       fits a title in one panel frame is rarely a rung (Pinball Dreams 2:
+       1200 leaves it short, 2500 drops 30% of frames, 1800 fits; silicon,
+       2026-11-10). The menu still shows the nearest rung, and choosing a
+       rung there replaces this. Only with the lock, so no existing .cfg
+       changes speed. */
+    if (x86_settings_get(X86_SET_VSYNC_LOCK)
+        && x86_settings_base_is_set(X86_SET_CPU_CYCLES)
+        && !x86_settings_base_is_set(X86_SET_CPU_PROFILE)
+        && x86_settings_get(X86_SET_CPU_PROFILE)
+           == x86_settings_builtin(X86_SET_CPU_PROFILE)   /* no .dosset rung */
+        && idx != 0) {
+        int k = x86_settings_get(X86_SET_CPU_CYCLES);
+        if (k >= 100 && k < (int)KIPS_CEILING)
+            guest_kips = (uint32_t)k;
+    }
 
     /* Seed the live table with what actually took, so the menu row starts where
        the machine is and `dirty` does not fire on a value nobody chose. */

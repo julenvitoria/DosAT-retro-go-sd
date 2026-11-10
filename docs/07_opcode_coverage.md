@@ -349,7 +349,7 @@ Warning legend:
 | E1 | reached | `.op_loopz_E1` | dual | - | no flag macro reachable |
 | E2 | reached | `.op_loop_E2` | dual | - | no flag macro reachable |
 | E3 | reached | `.op_jcxz_E3` | dual | - | no flag macro reachable |
-| E4 | reached | `.op_in_al_imm8_E4` | AGN | - | no flag macro reachable |
+| E4 | reached | `.op_in_al_imm8_E4` | AGN | - | REVIEW: no width primitive, 1 bare word op(s), no flag macro reachable |
 | E5 | reached | `.op_in_eax_imm8_E5` | dual | - | no flag macro reachable |
 | E6 | reached | `.op_out_imm8_al_E6` | AGN | - | no flag macro reachable |
 | E7 | reached | `.op_out_imm8_eax_E7` | dual | - | no flag macro reachable |
@@ -357,7 +357,7 @@ Warning legend:
 | E9 | reached | `.op_jmp_rel32_E9` | dual | - | no flag macro reachable |
 | EA | reached | `.op_jmp_far_EA` | dual | - | no flag macro reachable |
 | EB | reached | `.op_jmp_rel8_EB` | AGN | - | no flag macro reachable |
-| EC | reached | `.op_in_al_dx_EC` | AGN | - | no flag macro reachable |
+| EC | reached | `.op_in_al_dx_EC` | AGN | - | REVIEW: AGN body mixes width primitives with 1 bare word op(s), no flag macro reachable |
 | ED | reached | `.op_in_eax_dx_ED` | dual | - | no flag macro reachable |
 | EE | reached | `.op_out_dx_al_EE` | AGN | ARITH, LOGIC | - |
 | EF | reached | `.op_out_dx_eax_EF` | dual | ARITH, LOGIC | - |
@@ -365,14 +365,14 @@ Warning legend:
 | F1 | reached | `.op_int1_F1` | dual | - | - |
 | F2 | reached | `.op_repne_F2` | AGN | - | REVIEW: no width primitive, 1 bare word op(s), no flag macro reachable |
 | F3 | reached | `.op_rep_F3` | AGN | - | REVIEW: no width primitive, 9 bare word op(s), no flag macro reachable |
-| F4 | reached | `.op_hlt_F4` | AGN | - | REVIEW: no width primitive, 7 bare word op(s), no flag macro reachable |
+| F4 | reached | `.op_hlt_F4` | AGN | - | REVIEW: no width primitive, 8 bare word op(s), no flag macro reachable |
 | F5 | reached | `.op_cmc_F5` | AGN | - | no flag macro reachable |
 | F6 | reached | `.op_grp3_eb_F6` | AGN | ARITH, LOGIC | REVIEW: AGN body mixes width primitives with 77 bare word op(s) |
 | F7 | reached | `.op_grp3_ev_F7` | dual | ARITH, LOGIC | - |
 | F8 | reached | `.op_clc_F8` | AGN | - | no flag macro reachable |
 | F9 | reached | `.op_stc_F9` | AGN | - | no flag macro reachable |
-| FA | reached | `.op_cli_FA` | AGN | - | REVIEW: AGN body mixes width primitives with 4 bare word op(s), no flag macro reachable |
-| FB | reached | `.op_sti_FB` | AGN | - | REVIEW: AGN body mixes width primitives with 5 bare word op(s), no flag macro reachable |
+| FA | reached | `.op_cli_FA` | AGN | - | REVIEW: AGN body mixes width primitives with 5 bare word op(s), no flag macro reachable |
+| FB | reached | `.op_sti_FB` | AGN | - | REVIEW: AGN body mixes width primitives with 6 bare word op(s), no flag macro reachable |
 | FC | reached | `.op_cld_FC` | AGN | - | no flag macro reachable |
 | FD | reached | `.op_std_FD` | AGN | ARITH, INCDEC, LOGIC | REVIEW: AGN body mixes width primitives with 19 bare word op(s) |
 | FE | reached | `.op_grp4_FE` | AGN | INCDEC | REVIEW: AGN body mixes width primitives with 3 bare word op(s) |

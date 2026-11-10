@@ -140,6 +140,8 @@ static const x86_cfg_key_t x86_cfg_keys[] = {
     { "vga_hz",       "video",    X86_SET_VGA_HZ,    X86_CFG_T_INT     },
     /* Retrace locked to the frame loop (x86_settings.h, X86_SET_VSYNC_LOCK). */
     { "vsync_lock",   "video",    X86_SET_VSYNC_LOCK, X86_CFG_T_INT    },
+    /* The retrace spin fast-forwarded (X86_SET_RETRACE_SKIP). */
+    { "retrace_skip", "video",    X86_SET_RETRACE_SKIP, X86_CFG_T_INT  },
 
     /* ---- launch parameters, written out ------------------------------------
      *
