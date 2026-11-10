@@ -202,7 +202,11 @@ def main():
                       extflash=os.path.join(fw, "extflash.bin"),
                       sdcard=args.sd, elf=elf, intflash_bank=1,
                       intflash=os.path.join(fw, "gw_retro_go_intflash.bin"))
-        if args.timeline is None:
+        # --no-flash WITHOUT --hard-reset observes a device someone is USING:
+        # never inject the boot timeline's key presses into whatever is
+        # running there. With --hard-reset it is needed to reopen the game.
+        attach_only = args.no_flash and not args.hard_reset
+        if args.timeline is None and not attach_only:
             args.timeline = "timelines/start-preselected-game.tl"
         fw_elf = os.path.join(fw, "gw_retro_go.elf")
     else:
