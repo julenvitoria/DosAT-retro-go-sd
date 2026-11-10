@@ -461,6 +461,12 @@ python3 scripts/probe.py --retrogo --target hardware --no-flash \
     --deref cpu_state_ptr+2184=PITCNT --deref cpu_state_ptr+2188=PITREL
 ```
 
+`--retrogo` replays `start-preselected-game.tl` when no `--timeline` is given,
+EXCEPT for `--no-flash` without `--hard-reset`: that only attaches to a device
+someone is playing, and two injected A presses would land in their game.
+Symbols come from `build/core/dos_core.elf`, so the core on the SD card must be
+THAT build: `core_magic` reads `0x54494E59` when it is, `0` when it is not.
+
 `guest_insns_total`, `frames_rendered` and `frame_ms_last` are all banked at
 the BOTTOM of the frame body, so a stage that never finishes freezes every one
 of them and leaves nothing saying which stage it was. `x86_frame_phase` is the
