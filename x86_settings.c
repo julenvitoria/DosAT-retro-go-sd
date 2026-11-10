@@ -107,6 +107,9 @@ static const x86_setting_desc_t x86_setting_desc[X86_SET_COUNT] = {
 
     /* vga_hz: emulated vertical retrace rate. Default 70 is a real VGA. */
     { "vga_hz",       70, 50, 75 },
+
+    /* vsync_lock: one guest frame per panel frame (paced cycles only). */
+    { "vsync_lock",   0, 0, 1 },
 };
 
 /* String rows. Separate from the table above because they are .cfg-only and

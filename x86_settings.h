@@ -196,6 +196,18 @@ typedef enum {
      */
     X86_SET_VGA_HZ = 8,
 
+    /*
+     * `[video] vsync_lock`: 1 ends every frame-loop iteration at the end of an
+     * emulated vertical retrace, so each panel frame carries exactly one guest
+     * frame. vga_hz = 60 alone still judders: the paced budget is kips x
+     * WHOLE milliseconds, 16 or 17 per frame against a 16.67 ms retrace, so
+     * the retrace drifts across the panel's swap and some panel frames get
+     * two guest flips and the next none (Pinball Dreams, measured on silicon
+     * 2026-11-10). Needs a paced `cycles` (not max) and vga_hz near the
+     * panel's 60. Default 0: no title changes unless its .cfg asks.
+     */
+    X86_SET_VSYNC_LOCK = 9,
+
     X86_SET_COUNT
 } x86_setting_id_t;
 

@@ -498,6 +498,17 @@ X86_UC_TEXT(x86_vga_set_hz) void x86_vga_set_hz(unsigned hz)
         hz = 70u;
     vga_frame_ticks = hz == 70u ? VGA_FRAME_TICKS_70 : 1193182u / hz;
 }
+
+/* `vsync_lock` (x86_settings.h): real-time PIT ticks from now to the END of
+   the next vertical retrace, 1..VGA_FRAME_TICKS, and the frame length. The
+   frame loop sizes a paced slice to land there, so every iteration closes on
+   the same beam phase however its slices were cut short. Syncs pit_rt. */
+uint32_t x86_vga_ticks_to_frame_end(uint32_t *frame)
+{
+    x86_pit_sync();
+    *frame = VGA_FRAME_TICKS;
+    return VGA_FRAME_TICKS - pit_rt % VGA_FRAME_TICKS;
+}
 #define VGA_LINE_TICKS      38u
 #define VGA_HBLANK_TICKS    6u
 #define VGA_CRTC_REGS  32
