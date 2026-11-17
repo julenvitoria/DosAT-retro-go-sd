@@ -41,6 +41,16 @@ Defaults to retro-go's release parameters with `INTFLASH_BANK=1` (boots
 directly) and a 64 MB part. Give `--extflash-part-mb` and `--extflash-offset-mb`;
 the size is derived. Builds `gwemu_release`, so emulator and device media match.
 
+**Match the user's console** (64 MB part, dual boot with stock Zelda): build in
+a separate checkout with the stock backups in its `backup/`
+(`internal_flash_backup_zelda.bin` -> bank 1, `flash_backup_zelda.bin` ->
+extflash[0:4 MB], written on every build):
+`--bank 2 --extflash-part-mb 64 --extflash-offset-mb 4 --define MAX_CHEAT_CODES=13 --define ENABLE_SCREENSHOT=1`
+(the last two are in the fork's release workflow). `probe.py` reads the linked
+bank from the image's reset vector; under gwemu a bank-2 image is started from
+bank 2's vector (the unpatched stock bank 1 cannot jump there), and on hardware
+it is flashed to bank 2, leaving the patched stock firmware in bank 1 alone.
+
 ### `budget_gate.py` — the one command that fails when a budget regressed
 
 ```bash
