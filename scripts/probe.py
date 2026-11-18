@@ -36,7 +36,7 @@ from scripts.common.probe import (                       # noqa: E402
     sample, wait_for_value, guest_read,
 )
 from scripts.common.rglog import LogDrainer                # noqa: E402
-from scripts.common.target import Image, add_target_args, open_target  # noqa: E402
+from scripts.common.target import Image, add_target_args, linked_bank, open_target  # noqa: E402
 
 FW_DIR = "references/game-and-watch-retro-go-sd/build"
 CORE_MAGIC = 0x54494E59   # 'TINY', set by src/main.c
@@ -200,7 +200,9 @@ def main():
         image = Image(bank1=os.path.join(fw, "qemu_bank1.bin"),
                       bank2=os.path.join(fw, "qemu_bank2.bin"),
                       extflash=os.path.join(fw, "extflash.bin"),
-                      sdcard=args.sd, elf=elf, intflash_bank=1,
+                      sdcard=args.sd, elf=elf,
+                      intflash_bank=linked_bank(
+                          os.path.join(fw, "gw_retro_go_intflash.bin")),
                       intflash=os.path.join(fw, "gw_retro_go_intflash.bin"))
         # --no-flash WITHOUT --hard-reset observes a device someone is USING:
         # never inject the boot timeline's key presses into whatever is

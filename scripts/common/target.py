@@ -389,7 +389,29 @@ class GwemuTarget(Target):
         self.backend.open()
         self.sdcard = QemuSDCardManager(os.path.join(self.tmpdir, "sdcard.img"))
         self._check_time_pin()
+        if img.intflash_bank == 2:
+            self._boot_bank2()
         self.backend.resume()
+
+    BANK2_BASE = 0x08100000
+
+    def _boot_bank2(self):
+        """Start a bank-2 (dual-boot) firmware the way the device runs it.
+
+        On the device the PATCHED stock firmware in bank 1 jumps to bank 2.
+        gwemu always resets into bank 1 (init-nsvtor), and the bank-1 image
+        here is the unpatched stock backup, which would just boot Zelda/Mario.
+        So do what HardwareTarget._start_firmware does over the probe: load
+        MSP/PC from bank 2's vector table while halted (-S). The firmware's
+        own SystemInit sets VTOR from there.
+        """
+        sp = self.backend.read_uint32(self.BANK2_BASE)
+        pc = self.backend.read_uint32(self.BANK2_BASE + 4)
+        if not (0x08100000 <= pc < 0x08140000):
+            raise RuntimeError(f"bank 2 holds no firmware (reset vector {pc:#010x})")
+        self.backend.write_register("msp", sp)
+        self.backend.write_register("pc", pc)
+        print(f"booting bank 2: msp={sp:#010x} pc={pc:#010x}")
 
     # GPIOC input data register. TIME is PC5 on this board (retro-go main.h).
     GPIOC_IDR = 0x58020810
@@ -706,3 +728,17 @@ def open_target(args, image):
                        record=getattr(args, "record", None),
                        keep_temp=getattr(args, "keep_temp", False),
                        stdio_gdb=getattr(args, "stdio_gdb", False))
+
+
+def linked_bank(intflash_bin):
+    """Which internal-flash bank a retro-go intflash image was LINKED for,
+    read from its reset vector (bank 1 = 0x080xxxxx, bank 2 = 0x081xxxxx).
+    Reading it from the image means the run can never boot a bank-2 build
+    from bank 1 (which boots nothing) because a flag was forgotten."""
+    import struct
+    with open(intflash_bin, "rb") as fh:
+        head = fh.read(8)
+    if len(head) < 8:
+        return 1
+    pc = struct.unpack("<I", head[4:8])[0]
+    return 2 if 0x08100000 <= pc < 0x08200000 else 1

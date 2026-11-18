@@ -196,6 +196,7 @@ def build(path=DEFAULT_FIRMWARE_PATH, clean=False, target="gwemu_release",
             f"build reported success but these artifacts are missing: {missing}. "
             f"Target '{target}' may not produce emulator media -- use gwemu_release.")
     _refresh_bank_images(fb, verbose=verbose)
+    _place_stock_extflash(path, fb, params["EXTFLASH_OFFSET"], verbose=verbose)
 
     # The build flags are not dependencies here, so "I passed REMOTE_INPUT=1"
     # is not evidence that the image has it. Check the image.
@@ -316,3 +317,36 @@ def stage(fb, dest, sd_image=None, verbose=True):
         sizes = ", ".join(f"{k}={os.path.getsize(v)}" for k, v in out.items())
         print(f"[build_retrogo] staged -> {dest} ({sizes})")
     return out
+
+
+def _place_stock_extflash(path, fb, offset, verbose=True):
+    """Put the stock firmware's extflash under retro-go's region, as on a
+    dual-boot device.
+
+    A dual-boot install keeps the stock ROM in the first EXTFLASH_OFFSET bytes
+    of the part and retro-go above it. gwemu_release lays down an all-zero
+    extflash, so with an offset the bottom of the part would differ from the
+    device. If backup/flash_backup_{zelda,mario}.bin is present (the same
+    backups retro-go's Makefile uses for bank 1), copy it in. Re-applied on
+    every build because the media are reused across builds.
+    """
+    if not offset or not fb.extflash:
+        return
+    for name in ("flash_backup_zelda.bin", "flash_backup_mario.bin"):
+        src = os.path.join(path, "backup", name)
+        if os.path.exists(src):
+            break
+    else:
+        if verbose:
+            print("[build_retrogo] no backup/flash_backup_*.bin: the stock "
+                  "region of extflash stays zero")
+        return
+    with open(src, "rb") as fh:
+        data = fh.read()
+    if len(data) > offset:
+        raise RuntimeError(f"{src} is {len(data)} B, larger than the "
+                           f"{offset} B stock region")
+    with open(fb.extflash, "r+b") as fh:
+        fh.write(data)
+    if verbose:
+        print(f"[build_retrogo] extflash[0:{len(data)}] = {name}")
