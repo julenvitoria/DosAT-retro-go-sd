@@ -2143,7 +2143,10 @@ python3 tests/test_pit.py                # PIT channel 0 -- the SYSTEM TIMER's
                                          # meaning 65536. --negative rebuilds
                                          # with the port 0x40 case DELETED and
                                          # requires a FAIL, restoring the source
-                                         # in a finally
+                                         # in a finally. Phase F: a mode 0 count
+                                         # keeps running down past zero;
+                                         # --negative-mode0 (and --negative-clock)
+                                         # are its controls, docs/11 section 4
 python3 tests/test_keyboard.py           # BDA ring -> INT 16h, consumed by
                                          # GUEST code: AH=01 peek + its ZF on
                                          # the IRET frame, AH=00 dequeue, the

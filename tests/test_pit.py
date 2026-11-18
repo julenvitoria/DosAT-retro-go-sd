@@ -55,6 +55,10 @@ asked for 8523 / 140 Hz, and five assertions fire.
 0x20 READ arms, restoring the tree exactly as it was -- a channel 2 counter that
 answered with a static reload byte, a channel 0 counter that was not answered at
 all, and a PIC that floated 0xFF and so declared overflow on every measurement.
+
+Phase F: channel 0 in MODE 0 with a count of 16, read well after terminal count,
+must have wrapped past zero (an 8254 keeps decrementing; only OUT changes).
+`--negative-mode0` restores the old "stays at 0" and requires FAIL.
 """
 import argparse
 import sys
@@ -205,6 +209,20 @@ def main(args):
             fail("the free-running PIT tick count is 0 after a whole phase of "
                  "guest execution -- guest time is not advancing at all")
 
+        # ---- phase F: a mode 0 one-shot counts on through zero ----------
+        mode0 = z[7]
+        past = (0x10000 - mode0) & 0xFFFF
+        print(f"\nphase F -- mode 0, count 16, ~4000 LOOPs, latched read")
+        print(f"  count 0x{mode0:04X}   ({past} ticks past the wrap; 0 = stuck "
+              f"at terminal count)")
+        if mode0 == 0:
+            fail("a mode 0 channel reads 0 after terminal count: the count "
+                 "stopped there. A delay loop that subtracts two reads of it "
+                 "never ends -- Pinball Dreams 2 hung on reaching the table")
+        elif not (mode0 >= 0x8000 and 50 <= past <= 20000):
+            fail(f"a mode 0 channel read 0x{mode0:04X}; ~860 ticks after a "
+                 f"count of 16 it must have wrapped to just under 0x10000")
+
         print("\nPASS" if ok else "\nFAIL")
         return ok
     finally:
@@ -248,6 +266,7 @@ def _mutate_and_require_failure(args, target, replacement, what):
         print(f"-- negative control: rebuilt with {what} --")
         args.negative = False
         args.negative_clock = False
+        args.negative_mode0 = False
         failed = not main(args)
     finally:
         src.write_text(original)
@@ -258,6 +277,19 @@ def _mutate_and_require_failure(args, target, replacement, what):
     print("\nFAIL (negative control): the test PASSED without the fix, so it "
           "is not measuring anything")
     return False
+
+
+# Phase F's mutation: a mode 0 count that stops at terminal count, as before.
+MUTATE_MODE0 = "        return (uint16_t)((R - 1u) - el);\n    }\n"
+MUTATE_MODE0_WITH = ("        if (el >= R - 1u)\n            return 0;\n"
+                     "        return (uint16_t)((R - 1u) - el);\n    }\n")
+
+
+def negative_control_mode0(args):
+    """Rebuild with a mode 0 count that stops at 0 and require a FAIL."""
+    return _mutate_and_require_failure(
+        args, MUTATE_MODE0, MUTATE_MODE0_WITH,
+        "a mode 0 count that STOPS at terminal count")
 
 
 def negative_control_clock(args):
@@ -299,7 +331,11 @@ if __name__ == "__main__":
                    help="rebuild with the 0x40 WRITE arm deleted, require FAIL")
     p.add_argument("--negative-clock", action="store_true",
                    help="rebuild with the PIT/PIC READ arms deleted, require FAIL")
+    p.add_argument("--negative-mode0", action="store_true",
+                   help="rebuild with a mode 0 count that stops at 0, require FAIL")
     args = p.parse_args()
+    if args.negative_mode0:
+        sys.exit(0 if negative_control_mode0(args) else 1)
     if args.negative:
         sys.exit(0 if negative_control(args) else 1)
     if args.negative_clock:

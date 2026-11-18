@@ -211,6 +211,41 @@ int x86_opl_active(void)
 
 static uint16_t rst_mask;   /* channels keyed on by a muting reset, not yet aged */
 
+/*
+ * DIGITISED SOUND THROUGH THE CHIP (Pinball Dreams 2's ADLIB.SDR, console,
+ * 2026-11-10). The driver keys a note on, waits 2.5 ms by the PIT, then
+ * retunes it to frequency 0 with the key still down -- the operator is now
+ * PARKED part-way up its sine -- and from then on writes that operator's
+ * total level (register 40h) once per timer interrupt, 11,000 times a second:
+ * a 6-bit DAC. Two things here made that a hum:
+ *
+ *   - the chip only advances inside x86_opl_render_mix(), so no chip time
+ *     passed in those 2.5 ms and the operator was parked at phase 0, i.e. at
+ *     nothing. A retune-to-zero of a held note therefore runs the chip
+ *     forward first by the guest time it is short of since that key-on
+ *     (x86_opl_now is x86_io.c's clock at this write), discarding the output;
+ *   - ~185 level writes landed between two renders and only the last one
+ *     counted. A level register written PCM_MIN times inside one render
+ *     interval is a sample stream: from then on its values are QUEUED and
+ *     the render spreads them evenly over the frame, refilling a few chip
+ *     samples at a time so each lands where it was written.
+ *
+ * The queue is the unused tail of `chunk` -- a stream refills at most
+ * PCM_CHUNK samples -- because RAM_UC has ~600 B left and this is not worth
+ * a guest page. Everything that is not such a stream is untouched.
+ */
+#define PCM_MIN    8u                      /* writes per render that make a stream */
+#define PCM_CHUNK  64u                     /* chip samples per refill while streaming */
+#define PCM_CAP    ((OPL_CHUNK - PCM_CHUNK) * 4u)
+uint32_t x86_opl_now;
+static uint32_t kon_tick, kon_steps;       /* the last key-on: when, and chip time then */
+static uint16_t pcm_n;                     /* queued level writes */
+static uint8_t  pcm_reg;                   /* the streamed register, 0 = none */
+static uint8_t  tl_last, tl_run;           /* same-register level writes this interval */
+static uint8_t  kon_ch = 9u;
+
+static uint8_t *pcm_q(void) { return (uint8_t *)(void *)(chunk + PCM_CHUNK); }
+
 void x86_opl_write(uint8_t reg, uint8_t val)
 {
     /* BSS zero is not this chip's reset state and x86_io.c has no init entry
@@ -228,6 +263,39 @@ void x86_opl_write(uint8_t reg, uint8_t val)
        EMU8950_NO_TIMER comes off, so they stop here. */
     if (reg == 0x02u || reg == 0x03u || reg == 0x04u)
         return;
+
+    /* A level register: part of a sample stream, or about to become one. */
+    if (reg >= 0x40u && reg <= 0x55u) {
+        if (reg == pcm_reg) {
+            if (pcm_n < PCM_CAP) {
+                pcm_q()[pcm_n++] = val;
+                return;
+            }
+        } else if (reg != tl_last) {
+            tl_last = reg;
+            tl_run = 1;
+        } else if (++tl_run >= PCM_MIN && !pcm_reg) {
+            pcm_reg = reg;
+            pcm_n = 0;
+            chunk_pos = chunk_len = 0;     /* the queue lives past PCM_CHUNK */
+        }
+    }
+
+    /* A held note retuned to nothing: park it where real time would have. */
+    if ((reg & 0xF0u) == 0xB0u && (reg & 0x0Fu) == kon_ch
+        && (val & 0x3Fu) == 0x20u && (opl->reg[reg] & 0x20u)) {
+        /* 1,193,182 Hz over 49,716 Hz is 24: both divide the 14.31818 MHz
+           crystal, by 12 and by 288. */
+        uint32_t want = (x86_opl_now - kon_tick) / 24u;
+        uint32_t ran = x86_opl_chip_steps - kon_steps;
+        if (want > ran && want - ran <= OPL_CHUNK) {
+            OPL_calc_buffer_linear(opl, chunk, want - ran);
+            x86_opl_chip_steps += want - ran;
+            chunk_pos = chunk_len = 0;
+            pcm_n = 0;                     /* `chunk` was the queue too */
+        }
+        kon_ch = 9u;
+    }
 
     if (reg == 0xBDu) {
         uint8_t want = (uint8_t)((val >> 5) & 1u);
@@ -293,6 +361,9 @@ void x86_opl_write(uint8_t reg, uint8_t val)
         if (((val >> 5) & 1u) && !was) {
             x86_opl_keyons++;
             on = ci;
+            kon_ch = (uint8_t)ci;
+            kon_tick = x86_opl_now;
+            kon_steps = x86_opl_chip_steps;
         }
     }
 
@@ -310,9 +381,8 @@ void x86_opl_write(uint8_t reg, uint8_t val)
 }
 
 /* One chunk of chip samples at 49,716 Hz. */
-static void opl_refill(void)
+static void opl_refill(unsigned n)
 {
-    unsigned n = OPL_CHUNK;
     unsigned live = opl_live_slots();
     OPL_calc_buffer_linear(opl, chunk, n);
     chunk_len = n;
@@ -328,9 +398,23 @@ unsigned x86_opl_render_mix(int16_t *dst, unsigned frames,
                             unsigned sample_rate, int16_t amplitude)
 {
     uint32_t step;
+    unsigned qn = pcm_n, qi = 0, refill = OPL_CHUNK;
 
     rst_mask = 0;      /* chip time is passing now: nothing left to age */
+    /* The sample stream, if there is one (see x86_opl_write). Fewer than
+       PCM_MIN level writes since the last render means it has stopped: the
+       last value stands and the register is an ordinary one again. */
+    pcm_n = 0;
+    tl_run = 0;
+    if (pcm_reg && (qn < PCM_MIN || !opl || !frames || !sample_rate || !dst)) {
+        if (qn && opl)
+            OPL_writeReg(opl, pcm_reg, pcm_q()[qn - 1u]);
+        pcm_reg = 0;
+        qn = 0;
+    }
     if (!opl || !frames || !sample_rate || !dst || !x86_opl_active()) {
+        if (qn)
+            OPL_writeReg(opl, pcm_reg, pcm_q()[qn - 1u]);
         s0 = s1 = 0;               /* never hold a DC offset over silence */
         return 0;
     }
@@ -338,17 +422,29 @@ unsigned x86_opl_render_mix(int16_t *dst, unsigned frames,
     step = (uint32_t)(((uint64_t)X86_OPL_CLOCK_HZ << 16) / sample_rate);
     if (!step)
         step = 1;
+    if (qn) {
+        /* chip samples between two level writes, so each refill ends at one */
+        /* frames x step fits 32 bits: a frame is under 2,000 samples */
+        refill = ((frames * step) >> 16) / qn;
+        if (refill < 1u) refill = 1u;
+        if (refill > PCM_CHUNK) refill = PCM_CHUNK;
+    }
 
     for (unsigned i = 0; i < frames; i++) {
         int32_t v, o;
 
+        if (qn) {
+            unsigned due = (unsigned)(((uint32_t)i * qn) / frames);
+            while (qi <= due)
+                OPL_writeReg(opl, pcm_reg, pcm_q()[qi++]);
+        }
         frac += step;
         while (frac >= 0x10000u) {
             int32_t s;
             frac -= 0x10000u;
             s0 = s1;
             if (chunk_pos >= chunk_len)
-                opl_refill();
+                opl_refill(refill);
             s = chunk[chunk_pos++];        /* the sum of up to nine voices */
             if (s > 32767) s = 32767;
             else if (s < -32768) s = -32768;
@@ -371,6 +467,8 @@ unsigned x86_opl_render_mix(int16_t *dst, unsigned frames,
         else if (o < -32768) { o = -32768; x86_opl_clips++; }
         dst[i] = (int16_t)o;
     }
+    while (qi < qn)                /* more writes than output samples */
+        OPL_writeReg(opl, pcm_reg, pcm_q()[qi++]);
     x86_opl_samples += frames;
     return frames;
 }

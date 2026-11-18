@@ -1760,6 +1760,37 @@ static const uint8_t pit_code_e[] = {
     0xF4,                         /* HLT                                    */
 };
 
+/*
+ * PHASE F -- A MODE 0 ONE-SHOT KEEPS COUNTING PAST TERMINAL COUNT.
+ *
+ * Channel 0 in mode 0 with a count of 16, then ~4000 LOOPs (~860 ticks at the
+ * nominal rate), then a latched read. A real 8254 is not reloaded at terminal
+ * count but its counting element keeps decrementing -- 0, 0xFFFF, ... -- so
+ * the read is far past the wrap. The core used to read 0 there for ever, and
+ * Pinball Dreams 2's Adlib driver, which waits for two reads of such a channel
+ * to differ by 3050, hung on reaching the table.
+ */
+#define PIT_CODE_F      0x2B20u
+
+static const uint8_t pit_code_f[] = {
+    0xB0, 0x30,                   /* MOV AL,30h   ch0, lo/hi, MODE 0        */
+    0xE6, 0x43,                   /* OUT 43h,AL                             */
+    0xB0, 0x10,                   /* MOV AL,10h                             */
+    0xE6, 0x40,                   /* OUT 40h,AL   count lo                  */
+    0xB0, 0x00,                   /* MOV AL,0                               */
+    0xE6, 0x40,                   /* OUT 40h,AL   count hi -> 16            */
+    0xB9, 0xA0, 0x0F,             /* MOV CX,4000                            */
+    0xE2, 0xFE,                   /* LOOP $                                 */
+    0xB0, 0x00,                   /* MOV AL,0     latch ch0                 */
+    0xE6, 0x43,                   /* OUT 43h,AL                             */
+    0xE4, 0x40,                   /* IN  AL,40h   lsb                       */
+    0x8A, 0xE0,                   /* MOV AH,AL                              */
+    0xE4, 0x40,                   /* IN  AL,40h   msb                       */
+    0x86, 0xE0,                   /* XCHG AH,AL                             */
+    0xA3, 0x0A, 0x2B,             /* MOV [2B0Ah],AX                         */
+    0xF4,                         /* HLT                                    */
+};
+
 static uint32_t zt_r16(uint32_t off)
 {
     return (uint32_t)(test_ram[ZT_RES + off] |
@@ -1823,6 +1854,12 @@ static void pit_test_run(void)
     ztimer_r[3] = zt_r16(6);                /* the 8259 IRR                 */
     ztimer_r[4] = zt_r16(8);                /* ch2 count, read 3            */
     ztimer_r[6] = x86_pit_ticks();
+
+    /* ---- phase F: a mode 0 count runs on through zero ------------------ */
+    memcpy(&test_ram[PIT_CODE_F], pit_code_f, sizeof(pit_code_f));
+    kbd_test_reset_cpu(PIT_CODE_F);
+    (void)kbd_test_run_to_halt();
+    ztimer_r[7] = zt_r16(0x0A);             /* far past the wrap, never 0   */
 }
 
 /* ---------------------------------------------------------------------------
