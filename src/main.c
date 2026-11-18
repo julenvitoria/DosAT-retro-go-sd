@@ -5516,11 +5516,22 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                  * sub-slice (no new tick is armed on that path), and the
                  * keyboard gets the slot at the top of the loop.
                  */
+                /* A RUN SHORTER THAN KBD_RETRY_RUN IS THE CASE THAT NEEDS THIS
+                   MOST, and `run > KBD_RETRY_RUN` used to exclude it. Pinball
+                   Dreams 2's ADLIB.SDR runs IRQ 0 at ~11 kHz: 163 instructions
+                   a tick at 1800 kips, so the retry never fired (0 in 20 s,
+                   console, 2026-11-11), 26 of 54 codes were delivered and a
+                   break code stuck behind a tick left a flipper up. Such a
+                   run is cut at three quarters: the tick's handler still has
+                   most of the gap to send its EOI before the keyboard asks. */
+                uint32_t kbd_run = run > KBD_RETRY_RUN ? KBD_RETRY_RUN
+                                                       : run - run / 4u;
                 if (!got && cpu_state_ptr->hard_int_pending && x86_kbd_pending()
-                    && kbd_retries < KBD_RETRY_MAX && run > KBD_RETRY_RUN) {
+                    && kbd_retries < KBD_RETRY_MAX && kbd_run >= 16u
+                    && kbd_run < run) {
                     kbd_retries++;
                     guest_kbd_retries++;
-                    run = KBD_RETRY_RUN;
+                    run = kbd_run;
                     cpu_state_ptr->pit_reload = run;
                     if (cpu_state_ptr->pit_counter != 1u)
                         x86_pit_counter_forced(run);

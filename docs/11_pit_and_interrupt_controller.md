@@ -51,12 +51,17 @@ What is modelled now, channels 0 and 2:
   and honestly measure only how slow the emulator is.
 - counter-latch command (`OUT 0x43, xx00b`), lo/hi read sequencing per access
   mode, counting mode from the control word, mode 0 terminal count.
+- **a mode 0/1 count does NOT stop at terminal count**: no reload and no
+  further IRQ, but it keeps decrementing through `0`, `0xFFFF`, ... as an 8254
+  does. Reading 0 for ever hung Pinball Dreams 2, whose Adlib driver waits for
+  two reads of such a channel to differ by 3050 (2026-11-11).
 - channel 2 gated off `0x61` bit 0 (rising edge restarts, falling edge freezes),
   with `0x61` bit 5 derived from the real count.
 - **the count range is `R-1..0`, not `R..1`.** At `R = 65536` the just-loaded
   value is `0x0000` and a guest sees the counter jump *up* on its next read.
 - reset defaults model a **booted** machine (ch0 mode 3, free-running). Zeroed,
-  they are mode 0, which reaches terminal count once and reads 0 forever.
+  they are mode 0, which reaches terminal count once and then only wraps on
+  down with no further IRQ.
 
 Every host store to `pit_counter` goes through `x86_pit_counter_forced()` so
 arming an IRQ is not charged as elapsed guest time.
@@ -95,9 +100,12 @@ read 65535 are a genuine >54.9 ms overflow, not the port bug.
 ## 4. Testing
 
 `tests/test_pit.py` runs the real guest sequences as **guest code**, including
-the Zen Timer's own latch-and-read. Two negative controls, both proven to fail:
+the Zen Timer's own latch-and-read, and (phase F) a mode 0 count of 16 read
+~850 ticks later, which must have wrapped. Three negative controls, all proven
+to fail:
 
 | control | reproduces |
 |---|---|
 | `--negative` | the `0x40` WRITE arm deleted — divisor 65536 / 18.207 Hz where the guest asked 8523 / 140 Hz |
 | `--negative-clock` | the `0x40`/`0x42`/`0x20` READ arms deleted — ch2 reads `0/0/0`, elapsed `1`, **IRR `0xFF`**. The 65535 mechanism itself |
+| `--negative-mode0` | a mode 0 count that stops at terminal count — phase F reads `0x0000` instead of ~`0xFCAB` |

@@ -43,7 +43,11 @@ void     x86_opl_set_mem(void *p);
 int      x86_opl_present(void);
 
 /* One accepted register write. `reg` is the index latch, `val` the data byte.
-   Cheap: this is on the guest's OUT path and does no synthesis. */
+   Cheap: this is on the guest's OUT path and does no synthesis -- except to
+   park a held note that is retuned to frequency 0 (x86_opl.c, "DIGITISED SOUND
+   THROUGH THE CHIP"), which needs the caller's clock: set x86_opl_now, in
+   1.193182 MHz ticks, before the call. */
+extern uint32_t x86_opl_now;
 void x86_opl_write(uint8_t reg, uint8_t val);
 
 /* Non-zero when at least one channel could produce a sample. The render call

@@ -261,8 +261,8 @@ static uint32_t pit_ch_reload(unsigned ch)
 /*
  * The counter as the guest would read it right now.
  *
- * Modes 0 and 1 are one-shots: they count down to zero and STOP there, which
- * is the terminal count software polls for. Everything else is treated as
+ * Modes 0 and 1 are one-shots: they are not RELOADED at terminal count, but
+ * the count keeps running down through zero (see below). Everything else is treated as
  * periodic (mode 2/3), which is what a divisor is for -- the count wraps back
  * to the reload value and keeps going.
  *
@@ -284,8 +284,15 @@ static uint16_t pit_count(unsigned ch)
 
     uint32_t el = pit_rt - pit_ch_start[ch];
     if (x86_pit_ch_mode[ch] == 0 || x86_pit_ch_mode[ch] == 1) {
-        if (el >= R - 1u)
-            return 0;                /* terminal count, and it stays there */
+        /* THE COUNT DOES NOT STOP AT TERMINAL COUNT. OUT changes there and
+           no further interrupt comes, but the 8254's counting element keeps
+           decrementing: 0, then 0xFFFF, and on down, with no reload. It used
+           to read 0 for ever, and a delay loop that subtracts two reads of a
+           channel left in mode 0 never ended: Pinball Dreams 2 runs its
+           INT 08h off mode 0 one-shots, and its Adlib driver waits, with
+           interrupts off, for the count to fall 3050 -- the title hung on
+           reaching the table (console, 2026-11-10). Its scheduler's later
+           entries also read the count past zero to subtract the overshoot. */
         return (uint16_t)((R - 1u) - el);
     }
     return (uint16_t)((R - 1u) - (el % R));
@@ -1692,6 +1699,7 @@ static void opl_write(uint32_t port, uint8_t v)
        tone. The timer registers above are forwarded too and x86_opl.c ignores
        them by name; splitting the decode across two files is how the two
        copies of "which register is the timer" drift apart. */
+    x86_opl_now = opl_now();
     x86_opl_write(opl.idx, v);
 }
 
