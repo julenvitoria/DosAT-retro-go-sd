@@ -5870,6 +5870,15 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
          * Calling the old slot index against this ABI called whatever function
          * now sits there -- the symptom was a Hardfault in printf() on launch. */
         const uint32_t *ext = x86_video_clut256();
+        /* What the 256-entry table last pushed looked like (FNV-1a over its
+           words). A guest that swaps palettes inside a frame and ends on the
+           one already in the LTDC (cga_clut_dirty == 2, x86_vga_dac_write)
+           is not re-pushed: the push costs the firmware its darken map. */
+        static uint32_t clut256_hash;
+        uint32_t h = 2166136261u;
+        if (ext && (cga_clut_dirty || ext != clut256_pushed))
+            for (unsigned i = 0; i < 256u; i++)
+                h = (h ^ ext[i]) * 16777619u;
         if (ext != clut256_pushed) {
             /* Entering or leaving a 256-colour mode. */
             if (ext)
@@ -5877,12 +5886,14 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
             else
                 abi->lcd_set_clut(core_clut, CORE_CLUT_ENTRIES);
             clut256_pushed = ext;
+            clut256_hash = h;
             cga_clut_dirty = 0;
         } else if (cga_clut_dirty) {
-            if (ext)
-                abi->lcd_set_clut(ext, 256);
-            else
+            if (!ext)
                 abi->lcd_set_clut(core_clut, CORE_CLUT_ENTRIES);
+            else if (cga_clut_dirty != 2u || h != clut256_hash)
+                abi->lcd_set_clut(ext, 256);
+            clut256_hash = h;
             cga_clut_dirty = 0;
         }
         X86_ZONE_EXIT();                            /* ZONES: end VIDEO */

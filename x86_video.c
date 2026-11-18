@@ -806,15 +806,26 @@ void x86_vga_dac_write(uint8_t v)
     /* Stored AS THE GUEST WROTE IT, 6 bits per channel, because read-modify-
        write fade loops read the DAC back and must get their own value. The
        scaling to 8 bits happens in the consumer. */
-    vga_dac[vga_dac_wr] = (uint8_t)(v & 0x3F);
+    v &= 0x3Fu;
+    uint8_t moved = (uint8_t)(vga_dac[vga_dac_wr] != v);
+    vga_dac[vga_dac_wr] = v;
     if (++vga_dac_wr >= 768u)
         vga_dac_wr = 0;
-    vga_dac_dirty = 1;
     x86_vga_dac_writes++;
+    /* A WRITE OF THE VALUE ALREADY THERE CHANGES NOTHING. Pinball Dreams 2
+       reloads ~51 colours every frame (152 writes; console, 2026-11-18), each
+       one a whole-table push to the firmware, whose lcd_set_clut() rebuilds
+       its 256-entry darken map: 6.3% of wall in clut_nearest_cart. */
+    if (!moved)
+        return;
+    vga_dac_dirty = 1;
     /* A palette change is a CLUT reprogram, not a repaint: the pixels in the
-       aperture do not move, so the frame loop only has to re-push. */
-    if (cur_desc->kind == VM_VGA8)
-        cga_clut_dirty = 1;
+       aperture do not move, so the frame loop only has to re-push. 2 = "the
+       guest's DAC moved", which the frame loop may still find to be the table
+       it last pushed (two palettes swapped inside one frame); 1 is a push
+       somebody REQUIRES and is never downgraded. */
+    if (cur_desc->kind == VM_VGA8 && !cga_clut_dirty)
+        cga_clut_dirty = 2;
 }
 
 uint8_t x86_vga_dac_read(void)
