@@ -435,6 +435,26 @@ volatile uint32_t frame_ms_last    = 0;  /* last iteration, host ms           */
 volatile uint32_t panel_ms_min     = 0;  /* shortest iteration seen = the panel*/
 volatile uint32_t frame_10us_avg = 8u * 1667u; /* mean iteration, 8x, 10us units */
 volatile uint32_t guest_exec_ms    = 0;  /* host ms spent RUNNING the guest    */
+/*
+ * THE SLICE REGULATOR WORKS ON CPU TIME, NOT ON SD WAITS (2026-11-20).
+ * guest_exec_ms includes every blocking SD round trip the guest caused inside
+ * its slice -- an XMS move, a pagefile fill or writeback, a .dsk read -- and
+ * one of those is 4-60 ms. The regulator read that as "the CPU is over
+ * budget" and cut max_slice by an eighth, every such frame. Measured on the
+ * console (X86_ZONES=1, WOLF3D's GET PSYCHED load, 16 s): guest 10.8%, SD
+ * 38.5%, IDLE 41.7% -- the slice collapsed while the guest wrote 1,154 KB of
+ * XMS, and most frames then ran a handful of instructions and waited for the
+ * panel. Waiting for the card is not work a smaller slice would avoid, so it
+ * is subtracted here; guest_io_us is the part of this frame's slice that was
+ * spent blocked (io_block_us, summed by pgf_acc()).
+ */
+volatile uint32_t guest_io_us      = 0;
+volatile uint32_t guest_io_frames  = 0;  /* frames left unregulated: SD-bound */
+static uint32_t guest_cpu_us(void)
+{
+    uint32_t us = guest_exec_ms * 1000u;
+    return us > guest_io_us ? us - guest_io_us : 0u;
+}
 
 /*
  * Frame-time distribution. "Stutter" is a frame-deadline MISS, and neither a
@@ -1833,11 +1853,20 @@ static uint32_t pgf_us(uint32_t cycles)
     return per_us ? (cycles / per_us) : 0u;
 }
 
+/*
+ * EVERY BLOCKING SD ROUND TRIP, in one number. pgf_acc() is already the place
+ * the pagefile, the .dsk and (since this) XMS charge their time, so it is the
+ * one place to add it up. The slice regulator subtracts the part that fell
+ * inside the guest's slice -- see io_block_us_at_exec in the frame loop.
+ */
+volatile uint32_t io_block_us = 0;
+
 static void pgf_acc(volatile uint32_t *total, volatile uint32_t *worst,
                     uint32_t cycles)
 {
     uint32_t us = pgf_us(cycles);
     *total += us;
+    io_block_us += us;
     if (worst && us > *worst)
         *worst = us;
 }
@@ -2115,6 +2144,11 @@ static int pgf_read(uint32_t page, void *dst)
  */
 #define XMS_FILE_BASE  (8u * 1024u * 1024u)   /* keep XMS at byte offset 8 MB */
 
+/* XMS's SD time, through pgf_acc() like every other round trip. It was the
+   one blocking path with no timing at all, and WOLF3D's level load is 605 XMS
+   moves writing 1,154 KB (console, 2026-11-20). */
+volatile uint32_t xms_us_read = 0;
+volatile uint32_t xms_us_write = 0;
 volatile uint32_t xms_bytes_read = 0;
 volatile uint32_t xms_bytes_written = 0;
 volatile uint32_t xms_holes = 0;        /* reads of a region never written */
@@ -2173,10 +2207,12 @@ static int xms_read(uint32_t off, void *dst, uint32_t bytes)
     X86_ZONE_ENTER(X86_ZONE_DISK);
     size_t got = 0;
     int rc = -1;
+    uint32_t t0 = DWT_CYCCNT;
     if (abi->fseek(pgf_fp, (long)(XMS_FILE_BASE + off), SEEK_SET) == 0) {
         got = abi->fread(dst, 1, bytes, pgf_fp);
         rc = 0;
     }
+    pgf_acc(&xms_us_read, NULL, DWT_CYCCNT - t0);
     X86_ZONE_EXIT();
     if (rc != 0) { xms_file_errors++; return -1; }
     if (got < bytes) {
@@ -2197,9 +2233,11 @@ static int xms_write(uint32_t off, const void *src, uint32_t bytes)
         return -1;
     X86_ZONE_ENTER(X86_ZONE_DISK);
     int rc = -1;
+    uint32_t t0 = DWT_CYCCNT;
     if (abi->fseek(pgf_fp, (long)(XMS_FILE_BASE + off), SEEK_SET) == 0 &&
         abi->fwrite(src, 1, bytes, pgf_fp) == bytes)
         rc = 0;
+    pgf_acc(&xms_us_write, NULL, DWT_CYCCNT - t0);
     X86_ZONE_EXIT();
     if (rc != 0) { xms_file_errors++; return -1; }
     if (XMS_FILE_BASE + off + bytes > pgf_high_water)
@@ -5224,11 +5262,22 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                 if (last_slice_halted) {
                     /* Idle is not headroom: leave max_slice alone. */
                     guest_grow_blocked++;
-                } else if (guest_exec_ms * 100u < target) {
+                } else if (guest_io_us > guest_cpu_us()) {
+                    /* Mostly WAITING FOR THE CARD: this frame says nothing
+                       about the CPU either way. Shrinking was the old bug (the
+                       slice collapsed through WOLF3D's level load); growing
+                       is the opposite one -- such a frame is usually cut by
+                       the wall-clock escape before its slice is spent, so its
+                       CPU time reads low whatever the slice is, and the slice
+                       ran to MAX_SLICE_CEIL at tier 2 and would have to come
+                       back down through overrun frames at the first frame of
+                       gameplay. Leave it where the CPU last put it. */
+                    guest_io_frames++;
+                } else if (guest_cpu_us() * 100u < target * 1000u) {
                     max_slice += max_slice / 8u;
                     if (max_slice > MAX_SLICE_CEIL)
                         max_slice = MAX_SLICE_CEIL;
-                } else if (guest_exec_ms * 100u > target) {
+                } else if (guest_cpu_us() * 100u > target * 1000u) {
                     max_slice -= max_slice / 8u;
                     if (max_slice < MAX_SLICE_FLOOR)
                         max_slice = MAX_SLICE_FLOOR;
@@ -5428,6 +5477,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
 
         FRAME_PHASE(X86_PHASE_GUEST);
         uint32_t exec_start_ms = abi->HAL_GetTick();
+        uint32_t io_block_us_at_exec = io_block_us;
         while (!guest_halted) {
             /* THE WALL-CLOCK ESCAPE. See GUEST_SLICE_WALL_MS. Checked at the
                sub-slice boundary, which costs one tick read per boundary and
@@ -5708,6 +5758,7 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
         }
 
         guest_exec_ms = abi->HAL_GetTick() - exec_start_ms;
+        guest_io_us = io_block_us - io_block_us_at_exec;
 #if X86_PG_WSS
         /* Working-set sampler (diagnostic build only): every X86_PG_WSS_FRAMES
            frames, count the pages touched and unmap them again. Here, after
