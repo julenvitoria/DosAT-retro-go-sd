@@ -74,6 +74,7 @@ para **quitarlas**:
 |---|---|---|
 | `oplmode` | `none` para quitarlo; cualquier otra cosa lo deja | El chip FM (OPL): la música AdLib y la parte FM de la Sound Blaster. |
 | `sbtype` | `none` para quitarla; cualquier otra cosa la deja | La Sound Blaster (voces y efectos digitalizados). Sin ella tampoco se anuncia la variable `BLASTER`. |
+| `oplrate` | Hz; menos de 37287 (p. ej. `22050`) = **media frecuencia**; sin poner, `44100`, `48000` o `49716` = completa | A qué frecuencia se sintetiza la música FM. A media frecuencia el juego va más rápido (Wolf3D: +8–11 % de fotogramas en la consola) y la música suena algo más apagada: mismo tono y mismo ritmo, pero sin la octava más aguda. |
 
 Los nombres son los de DOSBox para que un `.cfg` copiado de allí funcione,
 pero aquí no se elige modelo: `sb16`, `sbpro2`, `opl3`… valen lo mismo que no

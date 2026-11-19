@@ -2411,6 +2411,9 @@ void __assert_func(const char *file, int line, const char *fn, const char *e)
 }
 
 volatile uint32_t run_fm_flag = 0;
+/* `[sblaster] oplrate` for the FM arm, written by test_sound.py --opl-rate.
+   0 = the default (full chip rate). */
+volatile uint32_t fm_rate_req = 0;
 volatile uint32_t fm_r[12];
 /* Cycles and operator updates for the ONE captured render call; see below. */
 volatile uint32_t fm_cycles = 0, fm_slots = 0;
@@ -2471,6 +2474,7 @@ static void fm_test_run(void)
 
     /* Independent of whatever the detection arm left in the chip. */
     x86_opl_reset();
+    x86_opl_set_rate(fm_rate_req);
     for (unsigned i = 0; i < FM_FRAMES / 2; i++)
         fm_pcm[i] = 0;
 

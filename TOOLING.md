@@ -2116,6 +2116,11 @@ python3 tests/test_sound.py --negative-irq # IRQ 5 DELIVERY
 python3 tests/test_sound.py --negative-rate # the resampler step forced to 1:1
 python3 tests/test_sound.py --negative-fm-env  # the FM envelope's RELEASE
 python3 tests/test_sound.py --negative-fm-freq # the FM frequency multiple
+python3 tests/test_sound.py --opl-rate 22050   # grade the FM arm at HALF the
+                                         # chip rate (`[sblaster] oplrate`,
+                                         # emu8950's _d1 renderers). Combine
+                                         # with --negative-fm-env/-freq: both
+                                         # controls must still FAIL there.
 python3 tests/test_sound.py --negative-f2  # the DSP's F2h IRQ REQUEST
 python3 tests/test_sound.py --negative-adpcm      # 4-bit ADPCM back on the
                                          # SILENT STUB it shipped as
