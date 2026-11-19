@@ -293,6 +293,18 @@ exactly ONE plane got the store to 233.5 cyc and +5% throughput — **35% of
 captured barely a third of it. Dropping the read for EVERY mask is what the
 argument actually licenses, and it is what the numbers above measure.
 
+**THE STORE LEAF (2026-11-20).** `x86_vga_planar_store()` now starts with
+`planar_store_leaf()`: a `PL_PLANE` store of 1, 2 or 4 bytes in Mode Y whose
+bytes all resolve into ONE region with storage of its own writes its
+consecutive cells inline and calls nothing; anything else returns 0 having
+touched nothing and the general body (now `noinline`, so the leaf does not
+inherit its nine saved registers) runs as before. Console, WOLF3D gameplay,
+alternating runs: `88` 209 -> 152 cyc, **13.0 -> 17.0 fps, 1.445 -> 1.822 M
+ips**. Multi-byte stores were where most of it was. The leaf's cell arithmetic
+is checked against `vga_cell()` by a diagnostic build
+(`EXTRA_CFLAGS=-DX86_PLANAR_LEAF_CHECK=1`, `x86_vga_planar_leaf_bad`):
+8.65 M cells in gameplay, 0 bad, and 99.99% of `PL_PLANE` bytes take the leaf.
+
 **The oracle is `tests/test_video.py`'s Mode Y and EGA 0Dh arms**, which drive
 all four write modes, set/reset, the ALU and partial bit masks through the same
 64,000 pixels: both stay **64000/64000 exact**, and

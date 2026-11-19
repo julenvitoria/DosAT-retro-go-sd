@@ -126,10 +126,11 @@ This is restructuring the C, not the rejected "planar_store in assembly".
 
 | # | change | est. saving | ITCM | state |
 |---|---|---|---|---|
-| A1 | dedicated short `Jcc` for 72-77, 7C-7F | 15-35 cyc per Jcc | +424 B | DONE `0996688`, tier 3 UNMEASURED |
+| A1 | dedicated short `Jcc` for 72-77, 7C-7F | 15-35 cyc per Jcc | +424 B | DONE `0996688`. Tier 3: 11.62 -> 12.03 fps (+3.5%); dedicated Jcc 18 cyc, generic 77 |
 | A2 | register index in 1 insn + narrow encodings in hot handlers | 1-2 cyc/insn | -700 B | next |
 | A3 | table-driven 16-bit ModRM (24 straight-line entries) | 10-18 cyc per memory operand | +500 B | |
-| B1 | planar hook: no veneers, byte leaf entry, grouped counters | 171 -> 80-100 cyc, up to ~10% of wall | 0 | |
+| B1 | planar hook: no veneers, leaf entry, section anchors | 171 -> 80-100 cyc, up to ~10% of wall | +144 B | DONE (with B2a). Tier 3: `88` 209 -> 152 cyc; alone +5% ips, fps flat |
+| B2a | the leaf takes word/dword stores too (contiguous cells) | not estimated | 0 | DONE. Tier 3 with B1: 13.0 -> 17.0 fps (+31%), 1.445 -> 1.822 M ips |
 | A4 | flags: break the `BFI` chain, lazy PF/AF | ~6 cyc per ALU op | -300 B | |
 | A5 | reuse `code_k` within a page; seam flush via the PIT slow path | 3-5 cyc/insn | 0 | high risk (fold invalidation) |
 | A6 | replicated dispatch tail in the hottest handlers | uncertain | +600 B | |
@@ -143,3 +144,26 @@ then `font8x8` (2,048 B). **To measure a step:** `guest_ips_achieved` and
 `x86_modey_presents`/s over `timelines/wolf3d-hw.tl`, oc level 0, base core
 `5699d99` against the step's commit. A step that gains nothing measurable is
 reverted and listed under REJECTED in `CLAUDE.md` with its number.
+
+### Tier 3 profile of WOLF3D GAMEPLAY (2026-11-20) -- it reorders the plan
+
+`X86_PROFILE=1` on the console, oc 0, gate `x86_modey_presents` 3 -> 162 in a
+14 s window, 18.1 M instructions; overhead-corrected (23 cyc/dispatch). The
+weights above were menus under gwemu; these are gameplay cycles:
+
+| share of guest cycles | |
+|---|---|
+| `88` MOV Eb,Gb | 30.6% -- 2.41 M x 209 cyc, the aperture byte store |
+| `AB` REP STOSW | 13.2% -- 20.6 k x 10,518 cyc, the hook once per element |
+| `8B` + `8A` + `89` | 17.4% at 66 cyc |
+| ALU r/m (01-3B) | 8.7% at 83 cyc; GRP1 imm 5.1%; GRP3 3.5% |
+| `FF` GRP5 | 4.0% at **278 cyc** each (238 k) -- UNEXPLAINED, `E8` is 30 |
+| `EC` IN AL,DX | 3.7% at **372 cyc** each, 11.5 k/s -- port not identified |
+| short Jcc | 2.1%; segment prefixes 13.7% of dispatches, 0.3% of cycles |
+
+So the video store was 44% of the guest's cycles and B1/B2 went first. What
+that left: the `88` store is still 152 cyc against 57 for `89` to ordinary
+memory (the asm stub's six-register save and the plane write itself), `REP
+STOSW` still re-enters the handler per element (B2 proper: one call per run),
+and `FF`/`EC` have not been looked at. FM music is a separate 25% of wall
+(`docs/03` 4g, `[sblaster] oplrate`). JSON: `build/artifacts/day2-profile-wolf3d-play.json`.
