@@ -5857,6 +5857,17 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
 
         guest_exec_ms = abi->HAL_GetTick() - exec_start_ms;
         guest_io_us = io_block_us - io_block_us_at_exec;
+        /* Reference ageing for the pager's victim picker (x86_pager_age). */
+#ifndef X86_PG_AGE_FRAMES
+#define X86_PG_AGE_FRAMES 30   /* ~0.5 s of panel frames */
+#endif
+        {
+            static uint8_t age_frames;
+            if (++age_frames >= X86_PG_AGE_FRAMES) {
+                age_frames = 0;
+                x86_pager_age();
+            }
+        }
 #if X86_PG_WSS
         /* Working-set sampler (diagnostic build only): every X86_PG_WSS_FRAMES
            frames, count the pages touched and unmap them again. Here, after
