@@ -428,7 +428,11 @@
     /* Store: \src is the value, \ptr the host pointer, \op the store opcode
        that would have been used, \sz its size in bytes, and \t a register that
        is DEAD at this site. \t and \src must be different registers. */
-    .macro VGA_ST op, sz, src, ptr, t
+    /* `fn`/`df`: a STOS site calls x86_vga_planar_stos instead, with the flag
+       word as a fourth argument -- that entry stores this element exactly as
+       x86_vga_planar_store does and then, under a REP, runs the rest of the
+       batch itself (x86_video_planar.c). */
+    .macro VGA_ST op, sz, src, ptr, t, fn=x86_vga_planar_store, df=0
         LDR \t, [R8, #CPU_VGA_BASE]
         SUBS \t, \ptr, \t
         CMP \t, #0x10000
@@ -449,7 +453,10 @@
         MOV R1, R3                @ value
     .endif
         MOV R2, #\sz
-        BL x86_vga_planar_store
+    .if \df
+        MOV R3, R11               @ DF (bit 10): the fill only runs forwards
+    .endif
+        BL \fn
         POP {R0-R3, R12, LR}
         B 98b
         .popsection
@@ -940,6 +947,9 @@ x86_cpu_interp_asm:
     .macro VGA_ST_V src, ptr, t
         VGA_ST STR, 4, \src, \ptr, \t
     .endm
+    .macro VGA_ST_STOS_V src, ptr, t
+        VGA_ST STR, 4, \src, \ptr, \t, x86_vga_planar_stos, 1
+    .endm
     /* Register file access. A 16-bit write must leave the high half alone --
      * that is architectural (AX writes do not clear the top of EAX) and STRH
      * gives it for free. */
@@ -1004,6 +1014,7 @@ x86_cpu_interp_asm:
     .purgem LD_V
     .purgem ST_V
     .purgem VGA_ST_V
+    .purgem VGA_ST_STOS_V
     .purgem LDREG_V
     .purgem STREG_V
     .purgem EIP_ADV_V
@@ -1028,6 +1039,9 @@ x86_cpu_interp_asm:
     .endm
     .macro VGA_ST_V src, ptr, t
         VGA_ST STRH, 2, \src, \ptr, \t
+    .endm
+    .macro VGA_ST_STOS_V src, ptr, t
+        VGA_ST STRH, 2, \src, \ptr, \t, x86_vga_planar_stos, 1
     .endm
     .macro LDREG_V dest, off
         LDRH.W \dest, [R8, \off]
