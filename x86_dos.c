@@ -3262,6 +3262,27 @@ static void xms_store_end(void)
  * the bug shape that made the exec fallback execute the IVT. x86_guest_ptr()
  * refuses a spanning request, so this splits at every boundary itself.
  */
+/*
+ * IN PIECES, WITH A YIELD BETWEEN THEM (2026-11-20). One store round trip is
+ * SD time -- ~21 ms per 4 KB written on the console -- and the audio DMA wants
+ * its free half refilled every ~16.7 ms. WOLF3D's level load is 605 moves
+ * (1,154 KB up) and lost 74-98 audio halves doing them: the music garbles on
+ * GET PSYCHED. So a run is cut to XMS_IO_PIECE and xms_yield, when the host
+ * registered one, runs between pieces. docs/12 1b measured that the card
+ * charges the same for 512 B x 64 as for one 32 KB write, so the pieces cost
+ * nothing extra.
+ *
+ * NO GUEST POINTER IS HELD ACROSS THE YIELD. The host's yield renders audio,
+ * the Sound Blaster's DMA reads guest memory, and that can fault a page in
+ * and EVICT the frame `p` pointed into. Each piece therefore resolves its own
+ * x86_guest_ptr() and the yield comes after the round trip that used it.
+ */
+#ifndef XMS_IO_PIECE
+#define XMS_IO_PIECE 1024u     /* the harness builds with 16: tests/test_xms.py */
+#endif
+static void (*xms_yield)(void);
+void x86_xms_set_yield(void (*fn)(void)) { xms_yield = fn; }
+
 static int xms_guest_run(uint32_t lin, uint32_t off, uint32_t bytes, int to_xms)
 {
     while (bytes) {
@@ -3269,6 +3290,8 @@ static int xms_guest_run(uint32_t lin, uint32_t off, uint32_t bytes, int to_xms)
         uint32_t run = X86_PG_SIZE - page_off;
         if (run > bytes)
             run = bytes;
+        if (run > XMS_IO_PIECE)
+            run = XMS_IO_PIECE;
         void *p = x86_guest_ptr(lin, run);
         if (!p) {
             x86_xms_guest_errors++;
@@ -3282,6 +3305,8 @@ static int xms_guest_run(uint32_t lin, uint32_t off, uint32_t bytes, int to_xms)
         lin += run;
         off += run;
         bytes -= run;
+        if (xms_yield)
+            xms_yield();                /* `p` is dead from here */
     }
     return 0;
 }

@@ -83,6 +83,7 @@ def main(args):
 
         time.sleep(0.5)
         r = run_arm(b, syms, "run_xms_flag", "xms_r", 56)
+        yields = b.read_uint32(syms["xmsb_yields"]) if "xmsb_yields" in syms else -1
         if r is None:
             print("FAIL: target never ran the XMS test")
             return False
@@ -120,6 +121,10 @@ def main(args):
             # the third down-move is the one through a LOCKED handle (below)
             ("bytes moved down (three down-moves)",     r[38], 3 * PAT),
             ("successful moves",                        r[36], 4),
+            # XMS_IO_PIECE is 16 in this harness: each of the four 64-byte
+            # moves is four pieces, so 16 yields, and the byte-exact round
+            # trip above is what proves the pieces were stitched right.
+            ("one audio yield per 16-byte piece",       yields, 16),
             ("one store open per move, not per page",   r[41], 4),
             ("no store I/O errors",                     r[39], 0),
             ("no unreachable guest page",               r[40], 0),

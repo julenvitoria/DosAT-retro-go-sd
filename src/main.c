@@ -297,6 +297,8 @@ volatile uint32_t x86_audio_submits = 0;   /* buffers handed to the SAI DMA  */
    sub-slice boundary or audio phase came round within its 16.7 ms -- heard as
    a click. 0 = the refill kept step with the audio clock. See audio_pump(). */
 volatile uint32_t x86_audio_blocks_missed  = 0;
+volatile uint32_t xms_audio_yields         = 0;  /* audio checks inside XMS moves */
+static void xms_audio_yield(void);
 volatile uint32_t x86_audio_peak_last = 0; /* loudest sample, newest buffer  */
 volatile uint32_t x86_audio_peak_max = 0;  /* loudest sample, whole session  */
 volatile uint32_t x86_audio_volume = 0;    /* the launcher's own 0..255      */
@@ -2716,6 +2718,7 @@ static void guest_reset(void)
                             x86_settings_base_is_set(X86_SET_XMS_KB)
                                 ? (uint32_t)x86_settings_get(X86_SET_XMS_KB)
                                 : X86_XMS_DEFAULT_KB);
+        x86_xms_set_yield(xms_audio_yield);
     } else {
         x86_pager_set_backing(NULL, NULL);
         /* No file, no extended memory, and INT 2Fh AX=4300h then answers
@@ -4843,6 +4846,16 @@ X86_UC_TEXT(ss_init) static void ss_init(uint8_t load_state, int8_t save_slot)
         ss_boot_slot = save_slot;
         ss_boot_pending = 1;
     }
+}
+
+/* Between the pieces of an XMS move (x86_xms_set_yield): refill the audio
+   half the DMA has finished, if it has. A no-op when it has not, which is
+   most calls -- one counter read. */
+static void audio_pump(const gw_firmware_abi_t *abi, int frame_end);
+static void xms_audio_yield(void)
+{
+    xms_audio_yields++;
+    audio_pump(gw_firmware_abi(), 0);
 }
 
 static void audio_pump(const gw_firmware_abi_t *abi, int frame_end)

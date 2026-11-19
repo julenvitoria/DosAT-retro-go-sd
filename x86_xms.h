@@ -110,6 +110,11 @@ void x86_xms_set_backing(x86_xms_open_fn op, x86_xms_close_fn cl,
    definition at that point and the pagefile is truncated under us anyway. */
 void x86_xms_reset(void);
 
+/* Called between the pieces of a move (x86_dos.c, xms_guest_run), with no
+   guest pointer held: the host keeps its audio DMA fed across a long move.
+   NULL, the default, is no yield. */
+void x86_xms_set_yield(void (*fn)(void));
+
 /* INT 2Fh. Answers AX=4300h and AX=4310h and NOTHING else -- every other
    multiplex subfunction is left with the guest's own registers untouched,
    which is what "no such driver" looks like and what the bare IRET did. */

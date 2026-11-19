@@ -5774,6 +5774,10 @@ volatile uint32_t xms_r[56];
 #define XMS_STORE_BYTES (XMS_STORE_KB * 1024u)
 
 static uint32_t xmsb_opens, xmsb_fail;
+/* Yields between the pieces of a move (x86_xms_set_yield); test_xms.py
+   reads it. With XMS_IO_PIECE 16 every 64-byte move is four pieces. */
+volatile uint32_t xmsb_yields;
+static void xmsb_yield(void)      { xmsb_yields++; }
 static int xmsb_open(int write)   { (void)write; xmsb_opens++; return 0; }
 static void xmsb_close(void)      { }
 static int xmsb_read(uint32_t off, void *dst, uint32_t bytes)
@@ -5965,8 +5969,10 @@ static void xms_test_run(void)
     /* ---- the store, and the guest pages the moves run against ---------- */
     memset(test_ram + XMS_STORE_OFF, 0xEE, XMS_STORE_BYTES);
     xmsb_opens = xmsb_fail = 0;
+    xmsb_yields = 0;
     x86_xms_set_backing(xmsb_open, xmsb_close, xmsb_read, xmsb_write,
                         XMS_STORE_KB);
+    x86_xms_set_yield(xmsb_yield);
 
     x86_pager_reset();
     x86_pager_set_backing(NULL, NULL);    /* four frames, four pages: no
@@ -6113,6 +6119,7 @@ static void xms_test_run(void)
     xms_r[46] = x86_xms_entry_reqs;
 
     x86_xms_set_backing(NULL, NULL, NULL, NULL, 0);
+    x86_xms_set_yield(NULL);
     for (uint32_t i = 0; i < PGT_PAGES; i++)
         guest_page_table[PGT_FIRST + i] = FOLD_INVALID;
     x86_pager_reset();
