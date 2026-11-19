@@ -246,6 +246,11 @@ X86_OPL_FM ?= 1
 # sound setting: at 1 the guest's own music is inaudible under it.
 X86_OPL_BENCH ?= 0
 
+# The PAUSE menu's "Cold RAM->NOR" guest snapshot (src/main.c). 0: compiled
+# out. It needs a full 160-frame guest pool and this tree has 157 at most, so
+# it can never run; its ~1 KB of RAM_EMU is a pager frame here. See main.c.
+X86_NOR_SNAP ?= 0
+
 # emu8950's configuration, transcribed from the owner's gnw-doom/Makefile
 # (lines 133-192) and explained in lib/emu8950/README-tinyemu.md. These are
 # NOT ours to tune casually: this exact set is what runs OPL music on this part
@@ -298,6 +303,7 @@ CORE_C_DEFS := \
 -DX86_AUDIO_TONE=$(X86_AUDIO_TONE) \
 -DX86_OPL_FM=$(X86_OPL_FM) \
 -DX86_OPL_BENCH=$(X86_OPL_BENCH) \
+-DX86_NOR_SNAP=$(X86_NOR_SNAP) \
 $(EMU8950_DEFS) \
 -DX86_MODEY_EXTRA_PAGES=$(X86_MODEY_EXTRA_PAGES) \
 -DX86_PGF_BENCH=$(X86_PGF_BENCH) \

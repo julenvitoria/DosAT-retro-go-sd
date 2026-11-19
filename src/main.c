@@ -3606,6 +3606,20 @@ volatile uint32_t nor_snap_addr     = 0;  /* XIP address the firmware chose   */
 #define NOR_SNAP_ATTACH        9
 #define NOR_SNAP_ALREADY      10
 
+/*
+ * X86_NOR_SNAP (Makefile.core, default 0): the "Cold RAM->NOR" menu entry and
+ * everything under it. It needs the FULL 160-frame guest pool
+ * (guest_ram_pages == 160, else nor_snap_result = NOR_SNAP_NO_RAM) and no
+ * tree since 2026-10 has had one -- 157 on the speed branch, 156 when it was
+ * merged with vsync-lock. So it could never run, while its ~1 KB of RAM_EMU
+ * was the margin that merge needed to stay under the 0x24062000 step and
+ * keep the 157th frame. (That frame was NOT what made WOLF3D catch on fast
+ * turns -- 156 and 157 frames measured the same ~2 evictions/s on the
+ * console; the cause is the 34 frames Mode Y's pages take. It is kept back on
+ * principle, not on a measured gain.) The counters above stay, reading 0.
+ * Build with X86_NOR_SNAP=1 once the pool can reach 160 again.
+ */
+#if X86_NOR_SNAP
 /* nor_snap_path is a LOCAL of nor_snapshot_run() now: it is built, used and
    removed inside that one call, and 288 B of RAM_EMU bss bought the EGA
    virtual card's page management (2026-10-26). */
@@ -3858,6 +3872,7 @@ static bool nor_snap_cb(odroid_dialog_choice_t *option,
     strcpy(option->value, nor_snap_value);
     return event == ODROID_DIALOG_ENTER;
 }
+#endif /* X86_NOR_SNAP */
 
 /*
  * Repaint the guest frame under the overlay.
@@ -4301,7 +4316,9 @@ static void poll_input(const gw_firmware_abi_t *abi)
        has to outlive the call, and it is static. */
     odroid_dialog_choice_t options[] = {
         {CPU_OPTION_ID, "CPU Speed", cpu_profile_value, 1, &cpu_profile_cb},
+#if X86_NOR_SNAP
         {NOR_OPTION_ID, "Cold RAM->NOR", nor_snap_value, 1, &nor_snap_cb},
+#endif
         ODROID_DIALOG_CHOICE_LAST,
     };
     abi->common_emu_input_loop(&pad, options, core_repaint);
