@@ -1923,7 +1923,10 @@ static_assert(EMU8950_NO_PERCUSSION_MODE, "");
    so this function had to leave; RAM_EMU had no room either without costing
    the guest a pager frame, and ITCM had ~1 KB. Called once per 128-256-sample
    refill, and it calls the slot renderers 18 times a refill. */
-#if X86_CORE_BUILD    /* the bare-metal harness's ITCM has no room for it */
+/* Not in an X86_PROFILE build either: the dispatch instrumentation takes
+   ~650 B of ITCM and the link overflows by 288 B. A profile core is a
+   measurement build, so it pays the RAM_EMU instead. */
+#if X86_CORE_BUILD && !X86_PROFILE   /* the harness's ITCM has no room for it */
 __attribute__((section(".itcram_hot.opl_calc")))
 #endif
 void OPL_calc_buffer_linear(OPL *opl, int32_t *buffer, uint32_t nsamples) {
