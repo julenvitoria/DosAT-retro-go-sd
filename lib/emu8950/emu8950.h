@@ -239,6 +239,9 @@ uint8_t OPL_status(OPL *opl);
 #define OPL_set_pan OPL_setPan
 #define OPL_set_pan_fine OPL_setPanFine
 
+/* DosAT: render-time chip decimation, see emu8950.c. */
+extern uint8_t emu8950_decim_shift;
+
 #ifdef __cplusplus
 }
 #endif

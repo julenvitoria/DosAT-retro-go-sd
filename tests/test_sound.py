@@ -556,6 +556,11 @@ def fm(args, runner):
             print(f"missing symbol {n} -- rebuild tests/main.c")
             return False
 
+    if getattr(args, "opl_rate", 0):
+        if "fm_rate_req" not in syms:
+            print("missing symbol fm_rate_req -- rebuild tests/main.c")
+            return False
+        b.write_uint32(syms["fm_rate_req"], args.opl_rate)
     b.write_uint32(syms["run_fm_flag"], 1)
     for _ in range(600):
         if b.read_uint32(syms["run_fm_flag"]) == 0:
@@ -1005,6 +1010,9 @@ if __name__ == "__main__":
     p.add_argument("--negative-adpcm-blk", action="store_true",
                    help="rebuild with the ADPCM block ticked per OUTPUT "
                         "sample instead of per DMA byte")
+    p.add_argument("--opl-rate", type=int, default=0, metavar="HZ",
+                   help="grade the FM arm at this `[sblaster] oplrate` "
+                        "(under 37287 = half the chip rate); default full")
     p.add_argument("--negative-fm-freq", action="store_true",
                    help="rebuild with the FM phase increment an octave out")
     args = p.parse_args()

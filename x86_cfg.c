@@ -129,6 +129,9 @@ static const x86_cfg_key_t x86_cfg_keys[] = {
      * on the main build those bytes go to the guest's frame pool. */
     { "oplmode",      "sblaster", X86_SET_OPL,      X86_CFG_T_NONE    },
     { "sbtype",       "sblaster", X86_SET_SB,       X86_CFG_T_NONE    },
+    /* DOSBox's synthesis rate. Here: under 37,287 Hz is half the chip rate
+       (x86_opl_set_rate), which is cheaper and loses the top octave. */
+    { "oplrate",      "sblaster", X86_SET_OPL_RATE, X86_CFG_T_INT     },
 
     /* ---- [video] -----------------------------------------------------------
      *

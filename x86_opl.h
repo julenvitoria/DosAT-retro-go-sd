@@ -33,6 +33,12 @@
 /* Power-on state. Safe to call at any time; kills every voice. */
 void x86_opl_reset(void);
 
+/* `[sblaster] oplrate`: the synthesis rate. Under 37,287 Hz selects half the
+   chip rate (24,858 Hz), anything else the full 49,716 Hz. x86_opl_rate()
+   says which is in force. See x86_opl.c. */
+void     x86_opl_set_rate(unsigned hz);
+unsigned x86_opl_rate(void);
+
 /* The chip's memory (x86_opl.c, at X86_OPL_MEM_BYTES): how big, the static
    block when this build has one (NULL under X86_OPL_DYNAMIC), and the call
    that installs a block -- or NULL for NO FM CHIP, which x86_opl_present()

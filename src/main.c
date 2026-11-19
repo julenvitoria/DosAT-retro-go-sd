@@ -3158,6 +3158,7 @@ static void sound_cards_apply(void)
 {
     x86_vga_set_hz((unsigned)x86_settings_get(X86_SET_VGA_HZ));
     x86_sb_enabled = (uint8_t)(x86_settings_get(X86_SET_SB) != 0);
+    x86_opl_set_rate((unsigned)x86_settings_get(X86_SET_OPL_RATE));
     if (!x86_settings_get(X86_SET_OPL))
         x86_opl_set_mem(NULL);
 }

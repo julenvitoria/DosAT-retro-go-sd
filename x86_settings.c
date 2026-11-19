@@ -107,6 +107,11 @@ static const x86_setting_desc_t x86_setting_desc[X86_SET_COUNT] = {
 
     /* vga_hz: emulated vertical retrace rate. Default 70 is a real VGA. */
     { "vga_hz",       70, 50, 75 },
+
+    /* oplrate, Hz. Default 49716 is the chip's own rate, today's sound. The
+       range takes what a dosbox.conf carries (8000..49716); the consumer maps
+       it to full or half (x86_opl_set_rate). */
+    { "oplrate",      49716, 8000, 49716 },
 };
 
 /* String rows. Separate from the table above because they are .cfg-only and
