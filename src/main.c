@@ -436,20 +436,29 @@ volatile uint32_t panel_ms_min     = 0;  /* shortest iteration seen = the panel*
 volatile uint32_t frame_10us_avg = 8u * 1667u; /* mean iteration, 8x, 10us units */
 volatile uint32_t guest_exec_ms    = 0;  /* host ms spent RUNNING the guest    */
 /*
- * THE SLICE REGULATOR WORKS ON CPU TIME, NOT ON SD WAITS (2026-11-20).
+ * A FRAME SPENT WAITING FOR THE CARD DOES NOT MOVE THE SLICE (2026-11-20).
  * guest_exec_ms includes every blocking SD round trip the guest caused inside
  * its slice -- an XMS move, a pagefile fill or writeback, a .dsk read -- and
- * one of those is 4-60 ms. The regulator read that as "the CPU is over
- * budget" and cut max_slice by an eighth, every such frame. Measured on the
- * console (X86_ZONES=1, WOLF3D's GET PSYCHED load, 16 s): guest 10.8%, SD
- * 38.5%, IDLE 41.7% -- the slice collapsed while the guest wrote 1,154 KB of
- * XMS, and most frames then ran a handful of instructions and waited for the
- * panel. Waiting for the card is not work a smaller slice would avoid, so it
- * is subtracted here; guest_io_us is the part of this frame's slice that was
- * spent blocked (io_block_us, summed by pgf_acc()).
+ * one of those is 4-60 ms. Measured on the console (X86_ZONES=1, WOLF3D's
+ * GET PSYCHED load, 16 s): guest 10.8%, SD 38.5%, IDLE 41.7% -- the
+ * regulator read the writes as "CPU over budget", cut max_slice an eighth
+ * per frame and most frames then ran a handful of instructions and waited
+ * for the panel. guest_io_us is the part of this frame's slice spent blocked
+ * (io_block_us, summed by pgf_acc()); a frame where that exceeds the CPU
+ * time leaves the slice alone (guest_io_frames).
+ *
+ * EVERY OTHER FRAME STILL REGULATES ON guest_exec_ms, SD TIME INCLUDED, and
+ * that is measured, not assumed. Subtracting the SD time from every frame
+ * (237bbe5) cut the load 15.2 -> 9.3 s but made play WORSE while a sound
+ * played: the owner felt it at once, and 0.1 s sampling agreed -- median
+ * 12.9 -> 11.3 fps, worst second 8.4 -> 5.9. A sound page is a few ms of SD
+ * in many consecutive frames; with the SD time excluded the slice filled the
+ * whole CPU budget and the SD wait came on top, so those frames overran the
+ * panel. Counting it, as before, keeps them inside it.
  */
 volatile uint32_t guest_io_us      = 0;
 volatile uint32_t guest_io_frames  = 0;  /* frames left unregulated: SD-bound */
+/* CPU part of this frame's slice: guest_exec_ms minus guest_io_us. */
 static uint32_t guest_cpu_us(void)
 {
     uint32_t us = guest_exec_ms * 1000u;
@@ -5273,11 +5282,11 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        back down through overrun frames at the first frame of
                        gameplay. Leave it where the CPU last put it. */
                     guest_io_frames++;
-                } else if (guest_cpu_us() * 100u < target * 1000u) {
+                } else if (guest_exec_ms * 100u < target) {
                     max_slice += max_slice / 8u;
                     if (max_slice > MAX_SLICE_CEIL)
                         max_slice = MAX_SLICE_CEIL;
-                } else if (guest_cpu_us() * 100u > target * 1000u) {
+                } else if (guest_exec_ms * 100u > target) {
                     max_slice -= max_slice / 8u;
                     if (max_slice < MAX_SLICE_FLOOR)
                         max_slice = MAX_SLICE_FLOOR;
