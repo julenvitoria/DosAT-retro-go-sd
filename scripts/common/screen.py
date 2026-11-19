@@ -93,6 +93,15 @@ def read_active_clut(backend, fw_syms, core_syms, entries=32):
         if addr and count:
             return ([backend.read_uint32(addr + 4 * i) for i in range(count)],
                     f"ext_clut ({count} entries)")
+    # retro-go-sd's external_cores firmware has no ext_clut: its lcd_set_clut()
+    # takes all 256 entries itself and `active_clut` IS the whole LTDC table
+    # (LCD_CLUT_HW_MAX slots, gw_lcd.c). `active_clut_count` exists only there,
+    # so it is what tells the two firmwares apart. Reading 32 entries of it
+    # indexed a 256-colour frame out of range.
+    if fw_syms.get("active_clut") and fw_syms.get("active_clut_count"):
+        clut, src = read_clut(backend, fw_syms, core_syms, 256)
+        count = backend.read_uint32(fw_syms["active_clut_count"]) & 0xFFFF
+        return clut, f"{src} (256 slots, {count} set)"
     return read_clut(backend, fw_syms, core_syms, entries)
 
 
