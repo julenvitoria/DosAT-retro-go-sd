@@ -7244,6 +7244,12 @@ void Reset_Handler(void) {
         }
 
         if (run_flag) {
+            /* The 8042 hands port 0x60 its byte from an OUTPUT BUFFER, loaded
+               by the controller and not by the guest's read (kbd_read_data in
+               x86_io.c). A case that queues scancodes therefore needs the
+               controller's half run once before the guest looks; with an
+               empty queue this does nothing. */
+            x86_kbd_latch_next();
             x86_cpu_interp_asm();
             run_flag = 0;
         }
