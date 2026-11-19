@@ -4664,6 +4664,48 @@ def run_test(args):
         all_passed = True
 
         only = getattr(args, "only", None)
+        # ---- short Jcc, every condition against the flag states that separate
+        # them. 72-77 and 7C-7F each have their OWN handler (cpu_exec_handlers.S,
+        # JCC_SHORT); the other six share the generic one. The truth table is
+        # computed here from the architectural definition, not copied from the
+        # handler, and each case names its flags so a failure reads as "JLE
+        # with SF=1 OF=1 ZF=0 jumped". Taken lands on the second HLT.
+        CF_, PF_, ZF_, SF_, OF_ = 0x001, 0x004, 0x040, 0x080, 0x800
+        JCC_NAMES = ["JO", "JNO", "JB", "JAE", "JZ", "JNZ", "JBE", "JA",
+                     "JS", "JNS", "JP", "JNP", "JL", "JGE", "JLE", "JG"]
+
+        def jcc_truth(cc, fl):
+            cf, pf, zf = bool(fl & CF_), bool(fl & PF_), bool(fl & ZF_)
+            sf, of = bool(fl & SF_), bool(fl & OF_)
+            base = [of, cf, zf, cf or zf, sf, pf, sf != of,
+                    (sf != of) or zf][cc >> 1]
+            return base != bool(cc & 1)
+
+        jcc_states = [0, CF_, ZF_, CF_ | ZF_, SF_, OF_, SF_ | OF_, PF_,
+                      SF_ | ZF_, OF_ | ZF_, SF_ | OF_ | ZF_,
+                      # DF sits at bit 10, next to OF: the signed conditions
+                      # fold OF onto SF with a shift and must not pick it up.
+                      0x400, 0x400 | ZF_]
+        jcc_cases = []
+        for mode in (16, 32):
+            for cc in range(16):
+                for fl in jcc_states:
+                    taken = jcc_truth(cc, fl)
+                    tc = {
+                        "name": "Jcc matrix (%d-bit): %s (%02X) flags=0x%03X %s"
+                                % (mode, JCC_NAMES[cc], 0x70 + cc, fl,
+                                   "TAKEN" if taken else "not taken"),
+                        "code": bytes([0x70 + cc, 0x01, 0xF4, 0xF4]),
+                        "regs_initial": {},
+                        "regs_expected": {},
+                        "eflags_initial": fl,
+                        "expected_eip": 4 if taken else 3,
+                    }
+                    if mode == 16:
+                        tc["mode"] = 16
+                    jcc_cases.append(tc)
+        test_cases.extend(jcc_cases)
+
         for test_num, tc in enumerate(test_cases, 1):
             if only and test_num not in only:
                 continue
