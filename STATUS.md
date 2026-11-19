@@ -51,14 +51,14 @@ An aperture byte store costs **171 cyc**; the same store to ordinary memory **55
 
 It forces a real re-link, refuses a stale ELF, and exits non-zero when ITCM, `__CORE_BSS_END__`, the implied frame count or `docs/07` regressed. Thresholds live in `tests/budgets.json` and carry the date they were taken.
 
-| | value — `tests/budgets.json`, recorded 2026-09-02, stock flags, forced re-link |
+| | value — `tests/budgets.json`, recorded 2026-11-19, stock flags, forced re-link |
 |---|---|
-| ITCM | `__CORE_ITCM_CODE_END__` = **0xF108** — **61,704 B used, 3,832 B free** of 65,536. The "~11.3 KB free / 0xD580" quoted here for several passes is STALE; the 0F bit and double-shift set alone cost +2,008 B |
-| RAM_EMU | `__CORE_BSS_END__` = **0x24065748**. It MOVES every merge — measure it (`arm-none-eabi-nm build/core/dos_core.elf \| grep __CORE_BSS_END__`), never quote it. Frame stride is **4,104**, not 4,096 (granule-seam slack); a full 160-frame pool wants **656,640 B** |
+| ITCM | `__CORE_ITCM_CODE_END__` = **0xFB88** — **64,392 B used, 1,144 B free** of 65,536 (2026-11-19). The 3,832 B quoted here until then was two months stale |
+| RAM_EMU | `__CORE_BSS_END__` = **0x24061480** (2026-11-19). It MOVES every merge — measure it (`arm-none-eabi-nm build/core/dos_core.elf \| grep __CORE_BSS_END__`), never quote it. Frame stride is **4,104**, not 4,096 (granule-seam slack); a full 160-frame pool wants **656,640 B** |
 | DTCM | **5,856 B** free (`core_dtcm_headroom_max`); the pool ends at `__dtc_padding_end__` = `0x2001A000`, not `0x20020000` — the 24 KB above it is the main stack ([`docs/12`](docs/12_memory_tiers.md) §8). Not an escape hatch for instruments |
 | arena | 143,360 B — check `x86_arena_largest`, not `_free`; claims fragment |
 
-**THE FRAME COUNT IS IN CONFLICT AND ONLY TIER 2 SETTLES IT.** The memory lane reclaimed 11,808 B (`8d597aa`) and concluded `guest_ram_pages` = **160**, `_pages_short` = **0** — *delta arithmetic* against a tier-2-measured 158/2-short baseline. The budget gate computes an *upper bound* of **154 frames** from `__RAM_EMU_END__ - __CORE_BSS_END__` (633,016 B headroom, 656,640 B wanted, short by 23,624 B). `scripts/common/budgets.py` states the derived count is an UPPER bound and the live `guest_ram_pages` is LOWER, because other RAM_EMU claims land first — so a live 160 **cannot** coexist with a bound of 154. Both cannot be right, and **tier 2 is the only thing that settles it**. Do not pick the flattering number. Until then assume the pool is short: read `_pages_short` after adding ANY RAM_EMU storage (one frame per 4,104 B comes out of the guest), and note a short pool disables the NOR snapshot (`guest_ram_pages != 160` -> `nor_snap_result=2`).
+**SPEED WORK (2026-11-19, branch `claude/dosat-x86-speed-9kraec`).** Baseline re-verified with Arm GNU Toolchain 15.2.Rel1: tier 1 green (`test_opcodes` 805/805, three stale KBD cases and `test_disk_cache`'s host shim fixed), WOLF3D golden 0.000% (the gate now reads the firmware's 256-slot `active_clut`). **ALLEYCAT's golden is STALE** (58%: the title now asks "use a joystick?" first) and needs a re-capture verified by eye. Where the ~57 cyc go, the opcode counts and the ordered plan: [`docs/02`](docs/02_cpu_pipeline_optimization.md) §8. **A1 (dedicated short Jcc, `0996688`) is built and gated but its tier-3 gain is UNMEASURED** -- measure `guest_ips_achieved` and `x86_modey_presents`/s against base `5699d99` before building on it. The frame-count question in the first section is settled (151 measured; this build's static bound is 158).
 
 ## What is broken right now
 
