@@ -125,20 +125,20 @@
     .word .op_outsv_6F + 1 // 0x6f
     .word .op_jcc_rel8_7X + 1 // 0x70
     .word .op_jcc_rel8_7X + 1 // 0x71
-    .word .op_jcc_rel8_7X + 1 // 0x72
-    .word .op_jcc_rel8_7X + 1 // 0x73
-    .word .op_jcc_rel8_7X + 1 // 0x74
-    .word .op_jcc_rel8_7X + 1 // 0x75
-    .word .op_jcc_rel8_7X + 1 // 0x76
-    .word .op_jcc_rel8_7X + 1 // 0x77
+    .word .op_jb_72 + 1 // 0x72
+    .word .op_jae_73 + 1 // 0x73
+    .word .op_jz_74 + 1 // 0x74
+    .word .op_jnz_75 + 1 // 0x75
+    .word .op_jbe_76 + 1 // 0x76
+    .word .op_ja_77 + 1 // 0x77
     .word .op_jcc_rel8_7X + 1 // 0x78
     .word .op_jcc_rel8_7X + 1 // 0x79
     .word .op_jcc_rel8_7X + 1 // 0x7a
     .word .op_jcc_rel8_7X + 1 // 0x7b
-    .word .op_jcc_rel8_7X + 1 // 0x7c
-    .word .op_jcc_rel8_7X + 1 // 0x7d
-    .word .op_jcc_rel8_7X + 1 // 0x7e
-    .word .op_jcc_rel8_7X + 1 // 0x7f
+    .word .op_jl_7C + 1 // 0x7c
+    .word .op_jge_7D + 1 // 0x7d
+    .word .op_jle_7E + 1 // 0x7e
+    .word .op_jg_7F + 1 // 0x7f
     .word .op_alu_eb_imm8_80 + 1 // 0x80
     .word .op_alu_ev_imm32_81 + 1 // 0x81
     .word .op_alu_eb_imm8_80 + 1 // 0x82

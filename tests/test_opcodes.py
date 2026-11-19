@@ -99,8 +99,10 @@ def run_test(args):
     run_flag_addr = syms.get("run_flag")
     page_table_addr = syms.get("guest_page_table")
     io_addr = syms.get("x86_io")
+    kbd_obf_addr = syms.get("kbd_obf")
     
-    if not all([dtcm_addr, ram_addr, run_flag_addr, page_table_addr, io_addr]):
+    if not all([dtcm_addr, ram_addr, run_flag_addr, page_table_addr, io_addr,
+                kbd_obf_addr]):
         print("Failed to find necessary symbols in ELF!")
         return False
         
@@ -2514,13 +2516,18 @@ def run_test(args):
                 "expected_eip": 3,
             },
             {
-                "name": "KBD: reads drain the queue in order",
+                # Port 0x60 HOLDS its byte: a second read without the
+                # controller loading the next code returns the same one. A
+                # game's INT 09h that reads 0x60 and chains to the BIOS, which
+                # reads it again, depends on exactly this (x86_io.c,
+                # kbd_read_data). The second code stays queued.
+                "name": "KBD: port 0x60 holds its byte across two reads",
                 # IN AL,0x60 ; MOV BL,AL ; IN AL,0x60 ; HLT
                 "code": bytes([0xE4, 0x60, 0x88, 0xC3, 0xE4, 0x60, 0xF4]),
                 "mode": 16,
                 "kbd_queue": [0x1E, 0x30],
                 "regs_initial": {},
-                "regs_expected": {0: 0x0030, 3: 0x001E},
+                "regs_expected": {0: 0x001E, 3: 0x001E},
                 "expected_eip": 7,
             },
             {
@@ -4657,6 +4664,48 @@ def run_test(args):
         all_passed = True
 
         only = getattr(args, "only", None)
+        # ---- short Jcc, every condition against the flag states that separate
+        # them. 72-77 and 7C-7F each have their OWN handler (cpu_exec_handlers.S,
+        # JCC_SHORT); the other six share the generic one. The truth table is
+        # computed here from the architectural definition, not copied from the
+        # handler, and each case names its flags so a failure reads as "JLE
+        # with SF=1 OF=1 ZF=0 jumped". Taken lands on the second HLT.
+        CF_, PF_, ZF_, SF_, OF_ = 0x001, 0x004, 0x040, 0x080, 0x800
+        JCC_NAMES = ["JO", "JNO", "JB", "JAE", "JZ", "JNZ", "JBE", "JA",
+                     "JS", "JNS", "JP", "JNP", "JL", "JGE", "JLE", "JG"]
+
+        def jcc_truth(cc, fl):
+            cf, pf, zf = bool(fl & CF_), bool(fl & PF_), bool(fl & ZF_)
+            sf, of = bool(fl & SF_), bool(fl & OF_)
+            base = [of, cf, zf, cf or zf, sf, pf, sf != of,
+                    (sf != of) or zf][cc >> 1]
+            return base != bool(cc & 1)
+
+        jcc_states = [0, CF_, ZF_, CF_ | ZF_, SF_, OF_, SF_ | OF_, PF_,
+                      SF_ | ZF_, OF_ | ZF_, SF_ | OF_ | ZF_,
+                      # DF sits at bit 10, next to OF: the signed conditions
+                      # fold OF onto SF with a shift and must not pick it up.
+                      0x400, 0x400 | ZF_]
+        jcc_cases = []
+        for mode in (16, 32):
+            for cc in range(16):
+                for fl in jcc_states:
+                    taken = jcc_truth(cc, fl)
+                    tc = {
+                        "name": "Jcc matrix (%d-bit): %s (%02X) flags=0x%03X %s"
+                                % (mode, JCC_NAMES[cc], 0x70 + cc, fl,
+                                   "TAKEN" if taken else "not taken"),
+                        "code": bytes([0x70 + cc, 0x01, 0xF4, 0xF4]),
+                        "regs_initial": {},
+                        "regs_expected": {},
+                        "eflags_initial": fl,
+                        "expected_eip": 4 if taken else 3,
+                    }
+                    if mode == 16:
+                        tc["mode"] = 16
+                    jcc_cases.append(tc)
+        test_cases.extend(jcc_cases)
+
         for test_num, tc in enumerate(test_cases, 1):
             if only and test_num not in only:
                 continue
@@ -4725,6 +4774,11 @@ def run_test(args):
             # head, tail, last -- tail = how many codes are queued
             backend.write_memory(io_addr + IO_KBD_HEAD,
                                  bytes([0, len(q) & 15, 0]))
+            # The output buffer is a static of x86_io.c, not part of x86_io:
+            # empty it, or a case that only polls 0x64 leaves "data waiting"
+            # set for the next one. The harness loads it from the queue
+            # (x86_kbd_latch_next) just before the guest runs.
+            backend.write_memory(kbd_obf_addr, bytes([0]))
             backend.write_uint32(dtcm_addr + 40, 0)   # idtr_base
             # A pending IRQ is delivered at the next boundary, so a case that
             # wants one also pulls the PIT counter forward to reach it.

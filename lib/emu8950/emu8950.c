@@ -1447,6 +1447,14 @@ void OPL_calc_buffer(OPL *opl, int16_t *buffer, uint32_t nsamples) {
 
 #if EMU8950_LINEAR
 
+/* emu8950_decim_shift (DosAT): each rendered sample advances 1 << shift chip
+ * steps -- phase, envelope and LFO -- so the chip is synthesised at
+ * clk/72 >> shift with pitch and note timing unchanged. 0 is the original
+ * render. The envelope still takes every chip step and every state transition
+ * is still checked per step; only the waveform is sampled less. Set between
+ * renders only (x86_opl_set_rate); each function below reads it once. */
+uint8_t emu8950_decim_shift;
+
 // these return number of samples rendered (can early out due to silence on the slot - not necessarily the channel)
 uint32_t slot_mod_linear(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase);
 uint32_t slot_car_linear_alg0(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase);
@@ -1456,387 +1464,471 @@ uint32_t slot_car_linear_alg1(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint3
 int hack_ch;
 #endif
 #if !EMU8950_SLOT_RENDER
+static INLINE __attribute__((always_inline)) uint32_t slot_mod_linear_body(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase, const uint32_t dsh) {
+    uint32_t s = 0;
+    uint32_t nsamples_bak = nsamples;
+    /* ---- loop-invariant hoists (gnw-doom) --------------------------------
+     * Every one of these was re-loaded PER SAMPLE through two dependent loads
+     * (slot->patch then ->field). None can change inside these loops: the only
+     * mutation point is commit_slot_update_eg_only(), which touches just
+     * eg_shift/eg_rate_h/eg_rate_l. Types are kept identical to the original
+     * expression so the arithmetic (notably the signed pm vs unsigned ml_table
+     * multiply) stays bit-exact. */
+    const OPL_PATCH *const pg_pat = slot->patch;
+    const int       pg_fnum3ff    = slot->fnum & 0x3ff;
+    const uint32_t  pg_ml         = ml_table[pg_pat->ML];
+    const uint8_t   pg_blk        = slot->blk;
+    const int8_t *const pmrow     = pm_table[(slot->fnum >> 7) & 7];
+    const int       pg_pm_shift   = opl->pm_mode ? 0 : 1;
+    const int       pg_has_pm     = pg_pat->PM;
+    const int       pg_has_am     = pg_pat->AM;
+    const uint8_t *const lfo_am   = opl->lfo_am_buffer;
+    const uint16_t  pg_tll        = slot->tll;
+    const int       pg_has_fb     = pg_pat->FB > 0;   /* modulator feedback */
+    const int       pg_fb_shift   = 9 - pg_pat->FB;
+    if (slot->eg_state == ATTACK) {
+        for (; s < nsamples; s++) {
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+                if (0 < slot->eg_out && slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    uint8_t step = lookup_attack_step(slot, eg_counter);
+                    slot->eg_out += (~slot->eg_out * step) >> 3;
+                }
+                if (slot->eg_out == 0) {
+                    slot->eg_state = DECAY;
+                    // todo collapse
+                    request_update(slot, UPDATE_EG);
+                    commit_slot_update_eg_only(slot, opl->notesel);
+                    nsamples = s;
+                    eg_counter += (1u << dsh) - 1 - ds;   /* time still passes */
+                    break;
+                }
+            }
+
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            int16_t fm = pg_has_fb ? (slot->output[1] + slot->output[0]) >> pg_fb_shift : 0;
+            slot->output[1] = slot->output[0];
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            opl->mod_buffer[s] = slot->output[0] = to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
+        }
+    }
+    if (slot->eg_state == DECAY) {
+        nsamples = nsamples_bak;
+        // todo if note ends we can stop early
+        for (; s < nsamples; s++) {
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+
+                if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
+                    // todo check for decay to zero
+                }
+
+                /* Checked after EVERY chip step: a second decay step past the
+                   sustain band would miss SUSTAIN and decay the note to mute. */
+                if ((slot->patch->SL != 15) && (slot->eg_out >> 4) == slot->patch->SL) {
+                    slot->eg_state = SUSTAIN;
+                    request_update(slot, UPDATE_EG);
+                    commit_slot_update_eg_only(slot, opl->notesel);
+                    nsamples = s;
+                    eg_counter += (1u << dsh) - 1 - ds;
+                    break;
+                }
+            }
+
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            int16_t fm = pg_has_fb ? (slot->output[1] + slot->output[0]) >> pg_fb_shift : 0;
+            slot->output[1] = slot->output[0];
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            opl->mod_buffer[s] = slot->output[0] = to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
+        }
+    }
+    if (slot->eg_state == SUSTAIN || slot->eg_state == RELEASE) {
+        nsamples = nsamples_bak;
+        for (; s < nsamples; s++) {
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+
+                if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
+                }
+            }
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            int16_t fm = pg_has_fb ? (slot->output[1] + slot->output[0]) >> pg_fb_shift : 0;
+            slot->output[1] = slot->output[0];
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            opl->mod_buffer[s] = slot->output[0] = to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
+        }
+    }
+    return nsamples;
+}
+
+static INLINE __attribute__((always_inline)) uint32_t slot_car_linear_alg1_body(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase, const uint32_t dsh) {
+    uint32_t s = 0;
+    uint32_t nsamples_bak = nsamples;
+    /* ---- loop-invariant hoists (gnw-doom) --------------------------------
+     * Every one of these was re-loaded PER SAMPLE through two dependent loads
+     * (slot->patch then ->field). None can change inside these loops: the only
+     * mutation point is commit_slot_update_eg_only(), which touches just
+     * eg_shift/eg_rate_h/eg_rate_l. Types are kept identical to the original
+     * expression so the arithmetic (notably the signed pm vs unsigned ml_table
+     * multiply) stays bit-exact. */
+    const OPL_PATCH *const pg_pat = slot->patch;
+    const int       pg_fnum3ff    = slot->fnum & 0x3ff;
+    const uint32_t  pg_ml         = ml_table[pg_pat->ML];
+    const uint8_t   pg_blk        = slot->blk;
+    const int8_t *const pmrow     = pm_table[(slot->fnum >> 7) & 7];
+    const int       pg_pm_shift   = opl->pm_mode ? 0 : 1;
+    const int       pg_has_pm     = pg_pat->PM;
+    const int       pg_has_am     = pg_pat->AM;
+    const uint8_t *const lfo_am   = opl->lfo_am_buffer;
+    const uint16_t  pg_tll        = slot->tll;
+    const int       pg_has_fb     = pg_pat->FB > 0;   /* modulator feedback */
+    const int       pg_fb_shift   = 9 - pg_pat->FB;
+    if (slot->eg_state == ATTACK) {
+        for (; s < nsamples; s++) {
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+                if (0 < slot->eg_out && slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    uint8_t step = lookup_attack_step(slot, eg_counter);
+                    slot->eg_out += (~slot->eg_out * step) >> 3;
+                }
+                if (slot->eg_out == 0) {
+                    slot->eg_state = DECAY;
+                    // todo collapse
+                    request_update(slot, UPDATE_EG);
+                    commit_slot_update_eg_only(slot, opl->notesel);
+                    nsamples = s;
+                    eg_counter += (1u << dsh) - 1 - ds;   /* time still passes */
+                    break;
+                }
+            }
+
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            // Dead feedback stores removed (see the alg0 note).
+            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out), slot, pg_tll, am)
+                              + opl->mod_buffer[s];
+        }
+    }
+    if (slot->eg_state == DECAY) {
+        nsamples = nsamples_bak;
+        // todo if note ends we can stop early
+        for (; s < nsamples; s++) {
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+
+                if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
+                    // todo check for decay to zero
+                }
+
+                /* Checked after EVERY chip step: a second decay step past the
+                   sustain band would miss SUSTAIN and decay the note to mute. */
+                if ((slot->patch->SL != 15) && (slot->eg_out >> 4) == slot->patch->SL) {
+                    slot->eg_state = SUSTAIN;
+                    request_update(slot, UPDATE_EG);
+                    commit_slot_update_eg_only(slot, opl->notesel);
+                    nsamples = s;
+                    eg_counter += (1u << dsh) - 1 - ds;
+                    break;
+                }
+            }
+
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            // Dead feedback stores removed (see the alg0 note).
+            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out), slot, pg_tll, am)
+                              + opl->mod_buffer[s];
+        }
+    }
+    if (slot->eg_state == SUSTAIN || slot->eg_state == RELEASE) {
+        nsamples = nsamples_bak;
+        for (; s < nsamples; s++) {
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+
+                if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
+                }
+            }
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            // Dead feedback stores removed (see the alg0 note).
+            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out), slot, pg_tll, am)
+                              + opl->mod_buffer[s];
+        }
+    }
+    return nsamples;
+}
+
+static INLINE __attribute__((always_inline)) uint32_t slot_car_linear_alg0_body(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase, const uint32_t dsh) {
+    uint32_t s = 0;
+    uint32_t nsamples_bak = nsamples;
+    /* ---- loop-invariant hoists (gnw-doom) --------------------------------
+     * Every one of these was re-loaded PER SAMPLE through two dependent loads
+     * (slot->patch then ->field). None can change inside these loops: the only
+     * mutation point is commit_slot_update_eg_only(), which touches just
+     * eg_shift/eg_rate_h/eg_rate_l. Types are kept identical to the original
+     * expression so the arithmetic (notably the signed pm vs unsigned ml_table
+     * multiply) stays bit-exact. */
+    const OPL_PATCH *const pg_pat = slot->patch;
+    const int       pg_fnum3ff    = slot->fnum & 0x3ff;
+    const uint32_t  pg_ml         = ml_table[pg_pat->ML];
+    const uint8_t   pg_blk        = slot->blk;
+    const int8_t *const pmrow     = pm_table[(slot->fnum >> 7) & 7];
+    const int       pg_pm_shift   = opl->pm_mode ? 0 : 1;
+    const int       pg_has_pm     = pg_pat->PM;
+    const int       pg_has_am     = pg_pat->AM;
+    const uint8_t *const lfo_am   = opl->lfo_am_buffer;
+    const uint16_t  pg_tll        = slot->tll;
+    const int       pg_has_fb     = pg_pat->FB > 0;   /* modulator feedback */
+    const int       pg_fb_shift   = 9 - pg_pat->FB;
+    if (slot->eg_state == ATTACK) {
+        for (; s < nsamples; s++) {
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+                if (0 < slot->eg_out && slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    uint8_t step = lookup_attack_step(slot, eg_counter);
+                    slot->eg_out += (~slot->eg_out * step) >> 3;
+                }
+                if (slot->eg_out == 0) {
+                    slot->eg_state = DECAY;
+                    // todo collapse
+                    request_update(slot, UPDATE_EG);
+                    commit_slot_update_eg_only(slot, opl->notesel);
+                    nsamples = s;
+                    eg_counter += (1u << dsh) - 1 - ds;   /* time still passes */
+                    break;
+                }
+            }
+
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            // output[] holds modulator FEEDBACK state. A carrier's fm comes
+            // from mod_buffer, and nothing ever reads output[] on this path,
+            // so both stores were dead. Keep the value in a local instead.
+            int32_t fm = opl->mod_buffer[s];
+
+            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
+        }
+    }
+    if (slot->eg_state == DECAY) {
+        nsamples = nsamples_bak;
+        // todo if note ends we can stop early
+        for (; s < nsamples; s++) {
+#if DUMPO
+            if (hack_ch == 0 && s == 12) {
+                breako();
+            }
+#endif
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+
+                if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
+                    // todo check for decay to zero
+                }
+
+                /* Checked after EVERY chip step: a second decay step past the
+                   sustain band would miss SUSTAIN and decay the note to mute. */
+                if ((slot->patch->SL != 15) && (slot->eg_out >> 4) == slot->patch->SL) {
+                    slot->eg_state = SUSTAIN;
+                    request_update(slot, UPDATE_EG);
+                    commit_slot_update_eg_only(slot, opl->notesel);
+                    nsamples = s;
+                    eg_counter += (1u << dsh) - 1 - ds;
+                    break;
+                }
+            }
+
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            // output[] holds modulator FEEDBACK state. A carrier's fm comes
+            // from mod_buffer, and nothing ever reads output[] on this path,
+            // so both stores were dead. Keep the value in a local instead.
+            int32_t fm = opl->mod_buffer[s];
+
+            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
+        }
+    }
+    if (slot->eg_state == SUSTAIN || slot->eg_state == RELEASE) {
+        nsamples = nsamples_bak;
+        for (; s < nsamples; s++) {
+#if DUMPO
+            if (hack_ch == 0 && s == 12) {
+                breako();
+            }
+#endif
+            pm_phase = (pm_phase + (opl->pm_dphase << dsh)) & (PM_DP_WIDTH - 1);
+            for (int ds = 0; ds < (1u << dsh); ds++) {   /* one chip step each */
+                eg_counter++;
+                uint16_t mask = (1 << slot->eg_shift) - 1;
+
+                if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
+                    slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
+                }
+            }
+            int8_t pm = 0;
+            if (pg_has_pm) {
+                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
+                pm >>= pg_pm_shift;
+            }
+            slot->pg_phase += (((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1) << dsh;
+            slot->pg_phase &= (DP_WIDTH - 1);
+            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
+
+            uint8_t am = pg_has_am ? lfo_am[s] : 0;
+            // output[] holds modulator FEEDBACK state. A carrier's fm comes
+            // from mod_buffer, and nothing ever reads output[] on this path,
+            // so both stores were dead. Keep the value in a local instead.
+            int32_t fm = opl->mod_buffer[s];
+
+            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
+        }
+    }
+    return nsamples;
+}
+
+/* Each renderer is compiled twice, as its own function, with dsh a CONSTANT:
+   in _d0 the chip-step loop runs once and folds away, so a title without
+   `oplrate` runs the original renderer, in RAM_UC where it always was; _d1
+   unrolls it to two steps and lives in RAM_EMU (.ramemu_text, dos_core.ld).
+   The public name only picks one -- one test per slot per refill.
+   WHY TWO COPIES, MEASURED ON THE CONSOLE (WOLF3D, oc 0, alternating runs):
+   one copy reading the shift at run time ran out of registers and spilled
+   the phase/envelope state to the stack every sample, so with oplrate UNSET
+   it was 4% fps / 7% ips slower than before -- every FM title paying for an
+   option it did not use. Both copies in RAM_UC overflowed its 168 B of slack
+   and took a 4 KB step from the video arena. */
+__attribute__((noinline)) uint32_t __not_in_flash_func(slot_mod_linear_d0)(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
+    return slot_mod_linear_body(opl, slot, nsamples, eg_counter, pm_phase, 0u);
+}
+__attribute__((noinline, section(".ramemu_text.slot_mod_linear_d1"))) uint32_t slot_mod_linear_d1(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
+    return slot_mod_linear_body(opl, slot, nsamples, eg_counter, pm_phase, 1u);
+}
 uint32_t __not_in_flash_func(slot_mod_linear)(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
-    uint32_t s = 0;
-    uint32_t nsamples_bak = nsamples;
-    /* ---- loop-invariant hoists (gnw-doom) --------------------------------
-     * Every one of these was re-loaded PER SAMPLE through two dependent loads
-     * (slot->patch then ->field). None can change inside these loops: the only
-     * mutation point is commit_slot_update_eg_only(), which touches just
-     * eg_shift/eg_rate_h/eg_rate_l. Types are kept identical to the original
-     * expression so the arithmetic (notably the signed pm vs unsigned ml_table
-     * multiply) stays bit-exact. */
-    const OPL_PATCH *const pg_pat = slot->patch;
-    const int       pg_fnum3ff    = slot->fnum & 0x3ff;
-    const uint32_t  pg_ml         = ml_table[pg_pat->ML];
-    const uint8_t   pg_blk        = slot->blk;
-    const int8_t *const pmrow     = pm_table[(slot->fnum >> 7) & 7];
-    const int       pg_pm_shift   = opl->pm_mode ? 0 : 1;
-    const int       pg_has_pm     = pg_pat->PM;
-    const int       pg_has_am     = pg_pat->AM;
-    const uint8_t *const lfo_am   = opl->lfo_am_buffer;
-    const uint16_t  pg_tll        = slot->tll;
-    const int       pg_has_fb     = pg_pat->FB > 0;   /* modulator feedback */
-    const int       pg_fb_shift   = 9 - pg_pat->FB;
-    if (slot->eg_state == ATTACK) {
-        for (; s < nsamples; s++) {
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-            if (0 < slot->eg_out && slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                uint8_t step = lookup_attack_step(slot, eg_counter);
-                slot->eg_out += (~slot->eg_out * step) >> 3;
-            }
-            if (slot->eg_out == 0) {
-                slot->eg_state = DECAY;
-                // todo collapse
-                request_update(slot, UPDATE_EG);
-                commit_slot_update_eg_only(slot, opl->notesel);
-                nsamples = s;
-            }
-
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            int16_t fm = pg_has_fb ? (slot->output[1] + slot->output[0]) >> pg_fb_shift : 0;
-            slot->output[1] = slot->output[0];
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            opl->mod_buffer[s] = slot->output[0] = to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
-        }
-    }
-    if (slot->eg_state == DECAY) {
-        nsamples = nsamples_bak;
-        // todo if note ends we can stop early
-        for (; s < nsamples; s++) {
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-
-            if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
-                // todo check for decay to zero
-            }
-
-            if ((slot->patch->SL != 15) && (slot->eg_out >> 4) == slot->patch->SL) {
-                slot->eg_state = SUSTAIN;
-                request_update(slot, UPDATE_EG);
-                commit_slot_update_eg_only(slot, opl->notesel);
-                nsamples = s;
-            }
-
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            int16_t fm = pg_has_fb ? (slot->output[1] + slot->output[0]) >> pg_fb_shift : 0;
-            slot->output[1] = slot->output[0];
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            opl->mod_buffer[s] = slot->output[0] = to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
-        }
-    }
-    if (slot->eg_state == SUSTAIN || slot->eg_state == RELEASE) {
-        nsamples = nsamples_bak;
-        for (; s < nsamples; s++) {
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-
-            if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
-            }
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            int16_t fm = pg_has_fb ? (slot->output[1] + slot->output[0]) >> pg_fb_shift : 0;
-            slot->output[1] = slot->output[0];
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            opl->mod_buffer[s] = slot->output[0] = to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
-        }
-    }
-    return nsamples;
+    return emu8950_decim_shift ? slot_mod_linear_d1(opl, slot, nsamples, eg_counter, pm_phase)
+                               : slot_mod_linear_d0(opl, slot, nsamples, eg_counter, pm_phase);
 }
-
+__attribute__((noinline)) uint32_t __not_in_flash_func(slot_car_linear_alg1_d0)(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
+    return slot_car_linear_alg1_body(opl, slot, nsamples, eg_counter, pm_phase, 0u);
+}
+__attribute__((noinline, section(".ramemu_text.slot_car_linear_alg1_d1"))) uint32_t slot_car_linear_alg1_d1(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
+    return slot_car_linear_alg1_body(opl, slot, nsamples, eg_counter, pm_phase, 1u);
+}
 uint32_t __not_in_flash_func(slot_car_linear_alg1)(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
-    uint32_t s = 0;
-    uint32_t nsamples_bak = nsamples;
-    /* ---- loop-invariant hoists (gnw-doom) --------------------------------
-     * Every one of these was re-loaded PER SAMPLE through two dependent loads
-     * (slot->patch then ->field). None can change inside these loops: the only
-     * mutation point is commit_slot_update_eg_only(), which touches just
-     * eg_shift/eg_rate_h/eg_rate_l. Types are kept identical to the original
-     * expression so the arithmetic (notably the signed pm vs unsigned ml_table
-     * multiply) stays bit-exact. */
-    const OPL_PATCH *const pg_pat = slot->patch;
-    const int       pg_fnum3ff    = slot->fnum & 0x3ff;
-    const uint32_t  pg_ml         = ml_table[pg_pat->ML];
-    const uint8_t   pg_blk        = slot->blk;
-    const int8_t *const pmrow     = pm_table[(slot->fnum >> 7) & 7];
-    const int       pg_pm_shift   = opl->pm_mode ? 0 : 1;
-    const int       pg_has_pm     = pg_pat->PM;
-    const int       pg_has_am     = pg_pat->AM;
-    const uint8_t *const lfo_am   = opl->lfo_am_buffer;
-    const uint16_t  pg_tll        = slot->tll;
-    const int       pg_has_fb     = pg_pat->FB > 0;   /* modulator feedback */
-    const int       pg_fb_shift   = 9 - pg_pat->FB;
-    if (slot->eg_state == ATTACK) {
-        for (; s < nsamples; s++) {
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-            if (0 < slot->eg_out && slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                uint8_t step = lookup_attack_step(slot, eg_counter);
-                slot->eg_out += (~slot->eg_out * step) >> 3;
-            }
-            if (slot->eg_out == 0) {
-                slot->eg_state = DECAY;
-                // todo collapse
-                request_update(slot, UPDATE_EG);
-                commit_slot_update_eg_only(slot, opl->notesel);
-                nsamples = s;
-            }
-
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            // Dead feedback stores removed (see the alg0 note).
-            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out), slot, pg_tll, am)
-                              + opl->mod_buffer[s];
-        }
-    }
-    if (slot->eg_state == DECAY) {
-        nsamples = nsamples_bak;
-        // todo if note ends we can stop early
-        for (; s < nsamples; s++) {
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-
-            if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
-                // todo check for decay to zero
-            }
-
-            if ((slot->patch->SL != 15) && (slot->eg_out >> 4) == slot->patch->SL) {
-                slot->eg_state = SUSTAIN;
-                request_update(slot, UPDATE_EG);
-                commit_slot_update_eg_only(slot, opl->notesel);
-                nsamples = s;
-            }
-
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            // Dead feedback stores removed (see the alg0 note).
-            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out), slot, pg_tll, am)
-                              + opl->mod_buffer[s];
-        }
-    }
-    if (slot->eg_state == SUSTAIN || slot->eg_state == RELEASE) {
-        nsamples = nsamples_bak;
-        for (; s < nsamples; s++) {
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-
-            if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
-            }
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            // Dead feedback stores removed (see the alg0 note).
-            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out), slot, pg_tll, am)
-                              + opl->mod_buffer[s];
-        }
-    }
-    return nsamples;
+    return emu8950_decim_shift ? slot_car_linear_alg1_d1(opl, slot, nsamples, eg_counter, pm_phase)
+                               : slot_car_linear_alg1_d0(opl, slot, nsamples, eg_counter, pm_phase);
 }
-
+__attribute__((noinline)) uint32_t __not_in_flash_func(slot_car_linear_alg0_d0)(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
+    return slot_car_linear_alg0_body(opl, slot, nsamples, eg_counter, pm_phase, 0u);
+}
+__attribute__((noinline, section(".ramemu_text.slot_car_linear_alg0_d1"))) uint32_t slot_car_linear_alg0_d1(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
+    return slot_car_linear_alg0_body(opl, slot, nsamples, eg_counter, pm_phase, 1u);
+}
 uint32_t __not_in_flash_func(slot_car_linear_alg0)(OPL *opl, OPL_SLOT *slot, uint32_t nsamples, uint32_t eg_counter, uint32_t pm_phase) {
-    uint32_t s = 0;
-    uint32_t nsamples_bak = nsamples;
-    /* ---- loop-invariant hoists (gnw-doom) --------------------------------
-     * Every one of these was re-loaded PER SAMPLE through two dependent loads
-     * (slot->patch then ->field). None can change inside these loops: the only
-     * mutation point is commit_slot_update_eg_only(), which touches just
-     * eg_shift/eg_rate_h/eg_rate_l. Types are kept identical to the original
-     * expression so the arithmetic (notably the signed pm vs unsigned ml_table
-     * multiply) stays bit-exact. */
-    const OPL_PATCH *const pg_pat = slot->patch;
-    const int       pg_fnum3ff    = slot->fnum & 0x3ff;
-    const uint32_t  pg_ml         = ml_table[pg_pat->ML];
-    const uint8_t   pg_blk        = slot->blk;
-    const int8_t *const pmrow     = pm_table[(slot->fnum >> 7) & 7];
-    const int       pg_pm_shift   = opl->pm_mode ? 0 : 1;
-    const int       pg_has_pm     = pg_pat->PM;
-    const int       pg_has_am     = pg_pat->AM;
-    const uint8_t *const lfo_am   = opl->lfo_am_buffer;
-    const uint16_t  pg_tll        = slot->tll;
-    const int       pg_has_fb     = pg_pat->FB > 0;   /* modulator feedback */
-    const int       pg_fb_shift   = 9 - pg_pat->FB;
-    if (slot->eg_state == ATTACK) {
-        for (; s < nsamples; s++) {
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-            if (0 < slot->eg_out && slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                uint8_t step = lookup_attack_step(slot, eg_counter);
-                slot->eg_out += (~slot->eg_out * step) >> 3;
-            }
-            if (slot->eg_out == 0) {
-                slot->eg_state = DECAY;
-                // todo collapse
-                request_update(slot, UPDATE_EG);
-                commit_slot_update_eg_only(slot, opl->notesel);
-                nsamples = s;
-            }
-
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            // output[] holds modulator FEEDBACK state. A carrier's fm comes
-            // from mod_buffer, and nothing ever reads output[] on this path,
-            // so both stores were dead. Keep the value in a local instead.
-            int32_t fm = opl->mod_buffer[s];
-
-            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
-        }
-    }
-    if (slot->eg_state == DECAY) {
-        nsamples = nsamples_bak;
-        // todo if note ends we can stop early
-        for (; s < nsamples; s++) {
-#if DUMPO
-            if (hack_ch == 0 && s == 12) {
-                breako();
-            }
-#endif
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-
-            if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
-                // todo check for decay to zero
-            }
-
-            if ((slot->patch->SL != 15) && (slot->eg_out >> 4) == slot->patch->SL) {
-                slot->eg_state = SUSTAIN;
-                request_update(slot, UPDATE_EG);
-                commit_slot_update_eg_only(slot, opl->notesel);
-                nsamples = s;
-            }
-
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            // output[] holds modulator FEEDBACK state. A carrier's fm comes
-            // from mod_buffer, and nothing ever reads output[] on this path,
-            // so both stores were dead. Keep the value in a local instead.
-            int32_t fm = opl->mod_buffer[s];
-
-            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
-        }
-    }
-    if (slot->eg_state == SUSTAIN || slot->eg_state == RELEASE) {
-        nsamples = nsamples_bak;
-        for (; s < nsamples; s++) {
-#if DUMPO
-            if (hack_ch == 0 && s == 12) {
-                breako();
-            }
-#endif
-            eg_counter++;
-            pm_phase = (pm_phase + opl->pm_dphase) & (PM_DP_WIDTH - 1);
-            uint16_t mask = (1 << slot->eg_shift) - 1;
-
-            if (slot->eg_rate_h > 0 && (eg_counter & mask) == 0) {
-                slot->eg_out = min(EG_MUTE, slot->eg_out + lookup_decay_step(slot, eg_counter));
-            }
-            int8_t pm = 0;
-            if (pg_has_pm) {
-                pm = pmrow[pm_phase >> (PM_DP_BITS - PM_PG_BITS)];
-                pm >>= pg_pm_shift;
-            }
-            slot->pg_phase += ((pg_fnum3ff + pm) * pg_ml) << pg_blk >> 1;
-            slot->pg_phase &= (DP_WIDTH - 1);
-            uint32_t pg_out = slot->pg_phase >> DP_BASE_BITS;
-
-            uint8_t am = pg_has_am ? lfo_am[s] : 0;
-            // output[] holds modulator FEEDBACK state. A carrier's fm comes
-            // from mod_buffer, and nothing ever reads output[] on this path,
-            // so both stores were dead. Keep the value in a local instead.
-            int32_t fm = opl->mod_buffer[s];
-
-            opl->buffer[s] += to_linear_tll(get_wave_table_wrap(slot, pg_out + fm), slot, pg_tll, am);
-        }
-    }
-    return nsamples;
+    return emu8950_decim_shift ? slot_car_linear_alg0_d1(opl, slot, nsamples, eg_counter, pm_phase)
+                               : slot_car_linear_alg0_d0(opl, slot, nsamples, eg_counter, pm_phase);
 }
 #endif
 
 static_assert(EMU8950_NO_PERCUSSION_MODE, "");
 // this produces stereo
-void __not_in_flash_func(OPL_calc_buffer_linear)(OPL *opl, int32_t *buffer, uint32_t nsamples) {
+/* In ITCM (.itcram_hot). With vsync-lock's OPL sample stream in x86_opl.c,
+   RAM_UC had 16 B of slack and the oplrate selector overflowed it by 224 B,
+   so this function had to leave; RAM_EMU had no room either without costing
+   the guest a pager frame, and ITCM had ~1 KB. Called once per 128-256-sample
+   refill, and it calls the slot renderers 18 times a refill. */
+#if X86_CORE_BUILD    /* the bare-metal harness's ITCM has no room for it */
+__attribute__((section(".itcram_hot.opl_calc")))
+#endif
+void OPL_calc_buffer_linear(OPL *opl, int32_t *buffer, uint32_t nsamples) {
     int i;
+    const uint32_t dsh = emu8950_decim_shift;
 #if EMU8950_SLOT_RENDER
     // kind of a nit pick, but so cheap - saves a bug every 24 hours due to an optimization
     // (we require that incrementing eg_counter is never zero during the rendering loop)
@@ -1866,8 +1958,8 @@ void __not_in_flash_func(OPL_calc_buffer_linear)(OPL *opl, int32_t *buffer, uint
     for(uint32_t s = 0; s<nsamples; s++) {
         // generate amplitude modulation same for all channels
         // need am_phase and lfo_am
-        opl->am_phase_index++;
-        if (opl->am_phase_index == sizeof(am_table)) opl->am_phase_index = 0;
+        opl->am_phase_index += 1u << dsh;
+        if (opl->am_phase_index >= sizeof(am_table)) opl->am_phase_index -= sizeof(am_table);
         // todo this is a candidate for remove simply because it is not super noticeable without
 
 #if EMU8950_SLOT_RENDER
@@ -1964,8 +2056,8 @@ void __not_in_flash_func(OPL_calc_buffer_linear)(OPL *opl, int32_t *buffer, uint
 #endif
         }
     }
-    opl->pm_phase = (opl->pm_phase + opl->pm_dphase * nsamples) & (PM_DP_WIDTH - 1);
-    opl->eg_counter += nsamples;
+    opl->pm_phase = (opl->pm_phase + ((opl->pm_dphase * nsamples) << dsh)) & (PM_DP_WIDTH - 1);
+    opl->eg_counter += nsamples << dsh;
 
 }
 #endif

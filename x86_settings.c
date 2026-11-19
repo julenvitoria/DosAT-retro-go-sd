@@ -113,6 +113,11 @@ static const x86_setting_desc_t x86_setting_desc[X86_SET_COUNT] = {
 
     /* retrace_skip: the 0x3DA retrace spin costs no host time (paced only). */
     { "retrace_skip", 0, 0, 1 },
+
+    /* oplrate, Hz. Default 49716 is the chip's own rate, today's sound. The
+       range takes what a dosbox.conf carries (8000..49716); the consumer maps
+       it to full or half (x86_opl_set_rate). */
+    { "oplrate",      49716, 8000, 49716 },
 };
 
 /* String rows. Separate from the table above because they are .cfg-only and

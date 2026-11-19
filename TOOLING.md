@@ -994,6 +994,13 @@ and masked pixels are still counted and printed (`m` in the block map). A
 tolerance wide enough to absorb a moving sprite is wide enough to absorb the
 corruption the gate exists to catch.
 
+**Which palette the capture is coloured with** (`read_active_clut`,
+`scripts/common/screen.py`): a firmware with `ext_clut` is read from there;
+retro-go-sd's `external_cores` firmware has none -- its `lcd_set_clut()` takes
+all 256 entries -- so there the whole 256-slot `active_clut` is read
+(`active_clut_count` is the symbol that tells the two apart). Reading only 32
+entries of it indexed a 256-colour frame out of range.
+
 `tests/test_goldens.py` is the tier-1 half: it drives the comparator and the
 attestation rules against synthetic images with **negative controls for every
 failure this project has actually shipped** — a one-pixel shift, a rectangle of
@@ -2115,6 +2122,11 @@ python3 tests/test_sound.py --negative-irq # IRQ 5 DELIVERY
 python3 tests/test_sound.py --negative-rate # the resampler step forced to 1:1
 python3 tests/test_sound.py --negative-fm-env  # the FM envelope's RELEASE
 python3 tests/test_sound.py --negative-fm-freq # the FM frequency multiple
+python3 tests/test_sound.py --opl-rate 22050   # grade the FM arm at HALF the
+                                         # chip rate (`[sblaster] oplrate`,
+                                         # emu8950's _d1 renderers). Combine
+                                         # with --negative-fm-env/-freq: both
+                                         # controls must still FAIL there.
 python3 tests/test_sound.py --negative-f2  # the DSP's F2h IRQ REQUEST
 python3 tests/test_sound.py --negative-adpcm      # 4-bit ADPCM back on the
                                          # SILENT STUB it shipped as

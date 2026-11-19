@@ -53,6 +53,11 @@ SHIM = r"""
 
 volatile uint32_t x86_disk_fake_cyccnt;
 
+/* x86_disk.c registers its session-owned pointers with the save-state
+   machinery (x86_disk_ss_keep). That registry is src/main.c's and no part of
+   the cache, so the host build answers it with nothing. */
+void x86_ss_keep(void *p, uint32_t bytes) { (void)p; (void)bytes; }
+
 extern void x86_disk_set_reader(int (*)(void *, void *, uint32_t, uint32_t),
                                 void *, uint32_t);
 extern void x86_disk_set_writer(int (*)(void *, const void *, uint32_t,

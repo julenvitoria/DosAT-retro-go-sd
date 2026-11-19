@@ -419,6 +419,23 @@ for the life of the title and closes it at guest reset, before `pgf_open_file()`
 truncates the file. `xms_opens` is **1** for a whole run and is the witness: if
 it ever tracks the move count, that decision has been reverted.
 
+### 6b'. What XMS costs on SILICON, and the regulator bug it exposed (2026-11-20)
+
+`X86_ZONES=1` on the console, WOLF3D's GET PSYCHED load (16 s): guest 10.8%,
+**SD 38.5% (6.2 s)**, **idle 41.7%**. The guest moved 1,154 KB UP into XMS in
+605 moves, ~21 ms per 4 KB written. The idle was ours: `guest_exec_ms`
+included those writes, the slice regulator in `src/main.c` read them as CPU
+over budget and cut `max_slice` an eighth per frame until most frames ran a
+handful of instructions and waited for the panel. XMS reads and writes are now
+timed through `pgf_acc()` (`xms_us_read`/`xms_us_write`), every blocking round
+trip is summed in `io_block_us`, and the regulator works on `guest_exec_ms`
+minus the slice's share of it (`guest_io_us`); a frame that waited more than
+it computed leaves the slice alone (`guest_io_frames`). Load **15.2 -> 9.3 s**
+on the console. The 6.2 s of writes themselves are untouched: they rewrite the
+same file range every level, which `docs/12` §1b measured at ~60 ms per 4 KB
+against ~13 ms appended. A slot ring for XMS, like the pager's, is the next
+lever.
+
 ### 6c. What is refused, and said out loud
 
 * **HMA** (`AH=01h`/`02h`): `BL=90h`, "HMA does not exist". The sixteen pages at
