@@ -119,10 +119,28 @@ void x86_pit_sync(void)
     if (kips < 100u)     kips = 100u;
     if (kips > 100000u)  kips = 100000u;
 
-    pit_frac += (uint64_t)d * (uint64_t)PIT_HZ;
-    uint64_t den = (uint64_t)kips * 1000u;
-    pit_now += (uint32_t)(pit_frac / den);
-    pit_frac %= den;
+    /* THE SAME ARITHMETIC IN 32 BITS WHEN IT FITS, and it nearly always does.
+       This runs on every port access that reads guest time -- Pinball Dreams
+       2's AdLib driver alone makes ~33,000 a second (11 kHz of IRQ 0, three
+       OUTs each) -- and a 64-bit divide is a library call on this core where
+       a 32-bit one is an instruction. den <= 1e8 (kips <= 100,000), the
+       carried fraction is below den, and d <= 3,000 keeps d * PIT_HZ under
+       3.58e9, so the sum stays under 2^32 and the quotient and remainder are
+       bit for bit what the 64-bit path produces. Anything larger, or a
+       fraction carried over a change of rate, takes that path as before. */
+    {
+        uint32_t den32 = kips * 1000u;
+        if (d <= 3000u && pit_frac < den32) {
+            uint32_t f = (uint32_t)pit_frac + d * (uint32_t)PIT_HZ;
+            pit_now += f / den32;
+            pit_frac = f % den32;
+        } else {
+            pit_frac += (uint64_t)d * (uint64_t)PIT_HZ;
+            uint64_t den = (uint64_t)kips * 1000u;
+            pit_now += (uint32_t)(pit_frac / den);
+            pit_frac %= den;
+        }
+    }
 
     /* THE REAL-TIME CLOCK: the vertical retrace (0x3DA bit 3) and the PIT
        counters. Paced it is the same clock; at Max it runs at the rate
