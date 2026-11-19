@@ -1638,6 +1638,9 @@ volatile uint32_t pit_r[10];
 /* Phase E's results, read back out of GUEST memory. A separate array so the
    published pit_r[10] layout tests/test_pit.py already reads stays untouched. */
 volatile uint32_t ztimer_r[8];
+volatile uint32_t idle_r[8];             /* phase G, x86_idle_spin */
+extern volatile uint32_t x86_idle_skips, x86_idle_skip_insns;
+void x86_idle_spin(uint32_t lin);
 
 static const uint8_t pit_code_a[] = {
     0xB0, 0x36,                   /* MOV AL,36h  ch0, lo/hi, mode 3         */
@@ -1771,6 +1774,7 @@ static const uint8_t pit_code_e[] = {
  * to differ by 3050, hung on reaching the table.
  */
 #define PIT_CODE_F      0x2B20u
+#define PIT_CODE_G      0x2B80u   /* phase G: the idle spin; its flag at 2BF0h */
 
 static const uint8_t pit_code_f[] = {
     0xB0, 0x30,                   /* MOV AL,30h   ch0, lo/hi, MODE 0        */
@@ -1860,6 +1864,65 @@ static void pit_test_run(void)
     kbd_test_reset_cpu(PIT_CODE_F);
     (void)kbd_test_run_to_halt();
     ztimer_r[7] = zt_r16(0x0A);             /* far past the wrap, never 0   */
+
+    /* ---- phase G: the wait-for-an-interrupt spin (x86_idle_spin) -------
+     * Pinball Dreams 2's own loop, byte for byte, and nothing here ever sets
+     * the flag: with the skip ON one slice must end after three guest
+     * instructions with the rest taken off pit_counter; with it OFF the hook
+     * must do nothing. Then the C side directly, against every way a loop
+     * can FAIL to be this one. */
+    {
+        static const uint8_t spin[] = {
+            0xC6, 0x06, 0xF0, 0x2B, 0x00,   /* MOV  BYTE [2BF0h],0        */
+            0xF6, 0x06, 0xF0, 0x2B, 0xFF,   /* TEST BYTE [2BF0h],0FFh     */
+            0x74, 0xF9,                     /* JZ   $-5                   */
+            0xF4,                           /* HLT (never reached)        */
+        };
+        const uint32_t lin = PIT_CODE_G + 5u;
+        uint32_t kips0 = x86_pit_kips, rt0 = x86_pit_rt_kips;
+        uint32_t untouched = 1;
+        memcpy(&test_ram[PIT_CODE_G], spin, sizeof(spin));
+        for (unsigned i = 0; i < 8; i++)
+            idle_r[i] = 0;
+
+        x86_pit_kips = x86_pit_rt_kips = 1000;  /* paced */
+        x86_retrace_skip = 1;
+        x86_idle_skips = x86_idle_skip_insns = 0;
+        kbd_test_reset_cpu(PIT_CODE_G);         /* pit_counter 20,000 */
+        x86_cpu_interp_asm();
+        idle_r[0] = (cpu_state_dtcm.exit_reason == X86_EXIT_TIMER);
+        idle_r[1] = x86_idle_skips;             /* 1 */
+        idle_r[2] = x86_idle_skip_insns;        /* ~19,996 of 20,000 */
+
+        x86_retrace_skip = 0;                   /* the switch is off */
+        x86_idle_skips = 0;
+        kbd_test_reset_cpu(PIT_CODE_G);
+        x86_cpu_interp_asm();
+        idle_r[3] = x86_idle_skips;             /* 0 */
+
+        /* Direct: the positive, then one change at a time. */
+        x86_retrace_skip = 1;
+        cpu_state_dtcm.pit_counter = 1000;
+        x86_idle_spin(lin);
+        idle_r[4] = cpu_state_dtcm.pit_counter; /* 2: 998 taken, even */
+#define IDLE_NEG(setup, undo) do { setup; cpu_state_dtcm.pit_counter = 1000; \
+        x86_idle_spin(lin); if (cpu_state_dtcm.pit_counter != 1000) untouched = 0; \
+        undo; } while (0)
+        IDLE_NEG(test_ram[lin + 6u] = 0xF8, test_ram[lin + 6u] = 0xF9);  /* not $-5   */
+        IDLE_NEG(test_ram[lin] = 0x8A,      test_ram[lin] = 0xF6);       /* not a test */
+        IDLE_NEG(test_ram[lin + 1u] = 0x07, test_ram[lin + 1u] = 0x06);  /* [bx], 2 B  */
+        IDLE_NEG(test_ram[lin + 5u] = 0x72, test_ram[lin + 5u] = 0x74);  /* jb         */
+        IDLE_NEG(x86_pit_kips = 0,          x86_pit_kips = 1000);        /* Max        */
+        IDLE_NEG(x86_retrace_skip = 0,      x86_retrace_skip = 1);       /* off        */
+#undef IDLE_NEG
+        cpu_state_dtcm.pit_counter = 3;         /* a stop is due: leave it */
+        x86_idle_spin(lin);
+        if (cpu_state_dtcm.pit_counter != 3) untouched = 0;
+        idle_r[5] = untouched;                  /* 1 */
+
+        x86_retrace_skip = 0;
+        x86_pit_kips = kips0; x86_pit_rt_kips = rt0;
+    }
 }
 
 /* ---------------------------------------------------------------------------

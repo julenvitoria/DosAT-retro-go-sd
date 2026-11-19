@@ -2646,6 +2646,19 @@ L(JCC_TAKEN):
     LDRSB.W R5, [R5, #-1]
     ADD R10, R5
     EIP_WRAP
+    /* A jump back over exactly ONE five-byte instruction may be a guest
+       waiting for an interrupt to change a byte -- `test byte [m],ff / jz $-5`
+       is a third of every instruction PINBALL DREAMS 2 executes. Two host
+       instructions here on a taken jump; x86_idle_spin() (x86_io.c) decides
+       whether it is that loop and takes the wait off the slice. R2 is still
+       the mode record: 16-bit addressing only, where ModRM 06/3E is [disp16]
+       and the instruction really is five bytes. */
+    CMN.W R5, #7
+    BNE.W .fetch_decode_loop
+    TST.W R2, #ADDRSIZE_XOR
+    BNE.W .fetch_decode_loop
+    MOV R0, R10
+    BL x86_idle_spin
     B.W .fetch_decode_loop
 
 OP .op_jcc_rel8_7X

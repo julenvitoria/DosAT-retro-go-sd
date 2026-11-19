@@ -223,6 +223,30 @@ def main(args):
             fail(f"a mode 0 channel read 0x{mode0:04X}; ~860 ticks after a "
                  f"count of 16 it must have wrapped to just under 0x10000")
 
+        # ---- phase G: the wait-for-an-interrupt spin is taken off the slice
+        if "idle_r" not in syms:
+            fail("missing symbol idle_r -- rebuild tests/main.c")
+        else:
+            g = [b.read_uint32(syms["idle_r"] + 4 * i) for i in range(6)]
+            print(f"\nphase G -- test byte [m],ff / jz $-5, nothing ever sets it")
+            print(f"  skip ON : slice ended on the timer {g[0]}, skips {g[1]}, "
+                  f"instructions taken off {g[2]} of 20000")
+            print(f"  skip OFF: skips {g[3]}   direct call left pit_counter {g[4]} "
+                  f"of 1000   six near-misses untouched {g[5]}")
+            if g[0] != 1 or g[1] != 1 or not (19990 <= g[2] <= 20000):
+                fail("with retrace_skip on, the spin did not hand its slice "
+                     "back: the JCC_TAKEN hook never reached x86_idle_spin(), "
+                     "or it did not take the run off pit_counter")
+            if g[3] != 0:
+                fail("the spin was skipped with retrace_skip OFF")
+            if g[4] != 2:
+                fail(f"a direct call left pit_counter at {g[4]}, not 2")
+            if g[5] != 1:
+                fail("x86_idle_spin() skipped a loop that is NOT the spin "
+                     "(wrong jump distance, another opcode, another addressing "
+                     "form, another condition, Max speed, the switch off, or a "
+                     "stop already due)")
+
         print("\nPASS" if ok else "\nFAIL")
         return ok
     finally:

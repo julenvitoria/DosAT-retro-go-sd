@@ -576,6 +576,53 @@ X86_UC_TEXT(retrace_skip_run) static void retrace_skip_run(void)
     x86_retrace_skips++;
     x86_retrace_skip_insns += k;
 }
+/*
+ * THE WAIT-FOR-AN-INTERRUPT SPIN (2026-11-20), retrace_skip's sibling.
+ *
+ *     c6 06 c4 87 00    mov  byte [87c4h], 0
+ *     f6 06 c4 87 ff    test byte [87c4h], 0ffh     <- lin
+ *     74 f9             jz   $-5
+ *
+ * Pinball Dreams 2's main loop parks here until its timer ISR sets the byte.
+ * Measured on the console (X86_PROFILE, on the table, cycles = 1800): F6 and
+ * 74 are 5.5 M and 6.1 M of 33.7 M instructions in 20 s, 28% of the guest's
+ * cycles -- the title has processor to spare and the host spends it spinning,
+ * then drops 2-4% of its frames.
+ *
+ * Nothing in the loop has a side effect and only an INTERRUPT can end it, and
+ * interrupts are delivered at the slice's planned stops. So the rest of the
+ * run is taken off pit_counter exactly as retrace_skip_run() does: guest time
+ * moves, every clock with it, and no host time is spent. Called by
+ * L(JCC_TAKEN) (cpu_exec_handlers.S) for a short jump back by exactly seven
+ * bytes under 16-bit addressing; `lin` is where it landed.
+ *
+ * The same switch as the retrace spin (`[video] retrace_skip`), paced titles
+ * only. Accepts TEST m8,imm8 (F6 06) and CMP m8,imm8 (80 3E) under JZ or JNZ.
+ */
+X86_UC_BSS(x86_idle_skips) volatile uint32_t x86_idle_skips;
+X86_UC_BSS(x86_idle_skip_insns) volatile uint32_t x86_idle_skip_insns;
+
+void x86_idle_spin(uint32_t lin)
+{
+    if (!x86_retrace_skip || !x86_pit_kips || !x86_pit_rt_kips)
+        return;
+    /* The jump is at lin+5 and code_k is ITS granule's k, unless the dispatch
+       staged it (granule offset > 0xFF0): keep all seven bytes below that. */
+    if ((lin & 0xFFFu) > 0xFEBu)
+        return;
+    const uint8_t *p = (const uint8_t *)x86_fold_ptr(lin, cpu_state_ptr->code_k);
+    if (!(((p[0] == 0xF6u && p[1] == 0x06u) || (p[0] == 0x80u && p[1] == 0x3Eu))
+          && (p[5] == 0x74u || p[5] == 0x75u) && p[6] == 0xF9u))
+        return;
+    uint32_t cnt = cpu_state_ptr->pit_counter;
+    if (cnt <= 3u)
+        return;                                   /* a stop is due now */
+    uint32_t k = (cnt - 1u) & ~1u;                /* whole passes of the loop */
+    cpu_state_ptr->pit_counter = cnt - k;
+    x86_idle_skips++;
+    x86_idle_skip_insns += k;
+}
+
 #define VGA_LINE_TICKS      38u
 #define VGA_HBLANK_TICKS    6u
 #define VGA_CRTC_REGS  32
