@@ -24,6 +24,10 @@ SDK_INC = $(SDK)/include
 # submodule) and our own headers, which is what keeps it a clean, isolated
 # measurement tier.
 CFLAGS += -DIS_LITTLE_ENDIAN -Ilib/FatFs
+# XMS moves are cut into pieces with an audio yield between them (x86_dos.c).
+# 16 B here, against 1 KB in the core, so test_xms's 64-byte moves actually
+# take the piece path: four pieces each, one across a granule boundary.
+CFLAGS += -DXMS_IO_PIECE=16u
 
 # emu8950 (lib/emu8950/) -- the FM synthesiser behind x86_opl.c. The flag set
 # is the owner's, transcribed from gnw-doom/Makefile and explained in
