@@ -65,6 +65,10 @@ SECTIONS
     *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .text.__[!u]*)
     *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .text.__u[!c]*)
     *(EXCLUDE_FILE(*emu8950.o *x86_opl.o *x86_mouse.o *x86_nor.o *x86_pgfile.o *x86_cfg.o) .rodata*)
+    /* emu8950's DECIMATED renderers (oplrate, emu8950.c _d1): only a title
+       that asks for half-rate FM runs them, and RAM_UC has no room for them
+       without costing the video arena a 4 KB step. */
+    *emu8950.o(.ramemu_text*)
     *(.glue_7)
     *(.glue_7t)
 

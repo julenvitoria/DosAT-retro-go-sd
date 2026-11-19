@@ -2448,6 +2448,9 @@ void __assert_func(const char *file, int line, const char *fn, const char *e)
 }
 
 volatile uint32_t run_fm_flag = 0;
+/* `[sblaster] oplrate` for the FM arm, written by test_sound.py --opl-rate.
+   0 = the default (full chip rate). */
+volatile uint32_t fm_rate_req = 0;
 volatile uint32_t fm_r[12];
 /* Cycles and operator updates for the ONE captured render call; see below. */
 volatile uint32_t fm_cycles = 0, fm_slots = 0;
@@ -2508,6 +2511,7 @@ static void fm_test_run(void)
 
     /* Independent of whatever the detection arm left in the chip. */
     x86_opl_reset();
+    x86_opl_set_rate(fm_rate_req);
     for (unsigned i = 0; i < FM_FRAMES / 2; i++)
         fm_pcm[i] = 0;
 
@@ -5807,6 +5811,10 @@ volatile uint32_t xms_r[56];
 #define XMS_STORE_BYTES (XMS_STORE_KB * 1024u)
 
 static uint32_t xmsb_opens, xmsb_fail;
+/* Yields between the pieces of a move (x86_xms_set_yield); test_xms.py
+   reads it. With XMS_IO_PIECE 16 every 64-byte move is four pieces. */
+volatile uint32_t xmsb_yields;
+static void xmsb_yield(void)      { xmsb_yields++; }
 static int xmsb_open(int write)   { (void)write; xmsb_opens++; return 0; }
 static void xmsb_close(void)      { }
 static int xmsb_read(uint32_t off, void *dst, uint32_t bytes)
@@ -5998,8 +6006,10 @@ static void xms_test_run(void)
     /* ---- the store, and the guest pages the moves run against ---------- */
     memset(test_ram + XMS_STORE_OFF, 0xEE, XMS_STORE_BYTES);
     xmsb_opens = xmsb_fail = 0;
+    xmsb_yields = 0;
     x86_xms_set_backing(xmsb_open, xmsb_close, xmsb_read, xmsb_write,
                         XMS_STORE_KB);
+    x86_xms_set_yield(xmsb_yield);
 
     x86_pager_reset();
     x86_pager_set_backing(NULL, NULL);    /* four frames, four pages: no
@@ -6146,6 +6156,7 @@ static void xms_test_run(void)
     xms_r[46] = x86_xms_entry_reqs;
 
     x86_xms_set_backing(NULL, NULL, NULL, NULL, 0);
+    x86_xms_set_yield(NULL);
     for (uint32_t i = 0; i < PGT_PAGES; i++)
         guest_page_table[PGT_FIRST + i] = FOLD_INVALID;
     x86_pager_reset();
@@ -7281,6 +7292,12 @@ void Reset_Handler(void) {
         }
 
         if (run_flag) {
+            /* The 8042 hands port 0x60 its byte from an OUTPUT BUFFER, loaded
+               by the controller and not by the guest's read (kbd_read_data in
+               x86_io.c). A case that queues scancodes therefore needs the
+               controller's half run once before the guest looks; with an
+               empty queue this does nothing. */
+            x86_kbd_latch_next();
             x86_cpu_interp_asm();
             run_flag = 0;
         }

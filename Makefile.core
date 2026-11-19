@@ -405,3 +405,9 @@ pack: $(TARGET_BIN) $(PAD_LOGO) $(HEADER_LOGO)
 		--header-logo $(HEADER_LOGO) \
 		--logo-invert \
 		--out $(PACKED_BIN)
+
+# x86_video_planar.c's hot store path reads a dozen of this file's own globals
+# per guest store. With -fdata-sections every one is its own section and gets
+# its own literal-pool pointer; as ONE .bss/.data block with section anchors
+# they are base+offset off a single pointer.
+$(BUILD_DIR)/x86_video_planar.o: CFLAGS += -fno-data-sections -fsection-anchors

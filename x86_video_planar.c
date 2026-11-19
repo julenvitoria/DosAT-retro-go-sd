@@ -1546,7 +1546,9 @@ static void planar_byte(uint32_t a, uint8_t v)
 
 /* The measured body. x86_vga_planar_store() below is the bracket; with
    X86_VPROF=0 it is a plain tail call the compiler folds away entirely. */
-PLANAR_HOT static void planar_store_body(uint32_t off, uint32_t val, uint32_t size)
+/* noinline: the byte leaf in x86_vga_planar_store() must not inherit this
+   function's nine saved registers and stack frame. */
+__attribute__((noinline)) PLANAR_HOT static void planar_store_body(uint32_t off, uint32_t val, uint32_t size)
 {
     uint8_t *ap = x86_vga_planar_aperture;
     uint32_t i;
@@ -1693,8 +1695,126 @@ PLANAR_HOT static void planar_store_body(uint32_t off, uint32_t val, uint32_t si
  * exactly one caller, which the compiler inlines away: the shipping path keeps
  * the code it had.
  */
+/*
+ * THE STORE LEAF (2026-11-20). A CPU byte, word or dword, write mode 0
+ * straight into the enabled planes (PL_PLANE), Mode Y with its page layout:
+ * that is `88` in WOLF3D's scalers and each element of its `rep stosw`, and on the console it was 30.6% of the guest's cycles at
+ * 209 each (X86_PROFILE, gameplay, 2.41 M stores in 14 s) against ~66 for the
+ * same MOV to ordinary memory.
+ *
+ * The general body pays for being general on every one of them: nine
+ * registers and 36 B of stack saved, x86_vga_planar_active() and memcpy()
+ * through veneers out of ITCM, vga_cell() as a call. This does the same
+ * arithmetic inline and calls nothing, so it is a leaf.
+ *
+ * IT DECIDES NOTHING NEW. The cell is vga_cell()'s Mode Y arm, line for line,
+ * and it only ever handles a store that arm resolves to real storage of the
+ * page's OWN. Everything else -- no storage (page tail, cache overrun), a page
+ * drawn over page 0 because its storage was not funded (the alias counter),
+ * the flat card, EGA, a store that leaves its region, any other write mode --
+ * returns 0 having
+ * touched NOTHING, and the general body runs exactly as before. The three
+ * counters move exactly as they did.
+ */
+#ifndef X86_PLANAR_LEAF_CHECK
+#define X86_PLANAR_LEAF_CHECK 0
+#endif
+#if X86_PLANAR_LEAF_CHECK
+volatile uint32_t x86_vga_planar_leaf_checked, x86_vga_planar_leaf_bad;
+#endif
+#if !X86_VPROF && !X86_MODEY_PAGE_NEGCTL
+typedef uint32_t __attribute__((may_alias)) planar_u32a;
+
+__attribute__((always_inline)) static inline int planar_store_leaf(uint32_t off, uint32_t val, uint32_t size)
+{
+    uint8_t *base = x86_vga_planar_aperture;
+    uint32_t a = off & (X86_VGA_APERTURE_BYTES - 1u);
+    const uint32_t last = a + size - 1u;
+    uint8_t *p;
+
+    if (planar_class != PL_PLANE || !x86_vga_modey_armed
+        || x86_vga_modey_flat || !base)
+        return 0;
+
+    /* A WORD OR DWORD IS STILL ONE ADAPTER OPERATION PER BYTE, each with its
+       own cell -- but when every byte of it resolves into the SAME region the
+       cells are consecutive (a cell is base + 4*offset), so it is one
+       resolution and `size` stores. A store that leaves its region part-way
+       (the window's end, a page's end or tail, the cache's end) is refused
+       here and the general body takes it byte by byte, as before. */
+    if (a >= X86_MODEY_CACHE) {
+        if (last >= X86_VGA_APERTURE_BYTES)
+            return 0;                   /* wraps the 64 KB window */
+        a -= X86_MODEY_CACHE;
+        if (a + size > modey_cache_offs)
+            return 0;
+        p = modey_cache + 4u * a;
+    } else {
+        const uint32_t pg = x86_vga_modey_page;
+        if (last >= X86_MODEY_CACHE)
+            return 0;                   /* runs into the cache region */
+        if (a >= pg) {
+            uint32_t n = 0;
+            a -= pg;
+            if (a >= pg) { a -= pg; n = 1; }
+            else if (a + size > pg)
+                return 0;               /* page 1 into page 2 */
+            base = modey_pgstore[n];
+            if (!base)
+                return 0;               /* aliased over page 0: the loud path */
+        } else if (a + size > pg) {
+            return 0;                   /* page 0 into page 1 */
+        }
+        if (a + size > X86_MODEY_PLANE)
+            return 0;                   /* the page tail has no storage */
+        p = base + 4u * a;
+    }
+
+#if X86_PLANAR_LEAF_CHECK
+    /* DIAGNOSTIC BUILD ONLY (EXTRA_CFLAGS=-DX86_PLANAR_LEAF_CHECK=1): every
+       cell this leaf resolved is compared with vga_cell(), the one place that
+       says where a plane byte lives. x86_vga_planar_leaf_bad must stay 0. */
+    for (uint32_t i = 0; i < size; i++) {
+        x86_vga_planar_leaf_checked++;
+        if (vga_cell((off + i) & (X86_VGA_APERTURE_BYTES - 1u)) != p + 4u * i)
+            x86_vga_planar_leaf_bad++;
+    }
+#endif
+    x86_vga_planar_stores++;
+    x86_vga_planar_cls_plane += size;
+    if (planar_plane_mask32 == 0xFFFFFFFFu) {
+        /* every cell is base + 4*a with a 4-aligned base: aligned STRs */
+        planar_u32a *q = (planar_u32a *)(void *)p;
+        do {
+            *q++ = (val & 0xFFu) * 0x01010101u;
+            val >>= 8;
+        } while (--size);
+        x86_vga_planar_cls_plane1 += (uint32_t)(q - (planar_u32a *)(void *)p);
+    } else {
+        const uint32_t mm = map_mask;
+        const uint32_t n = size;
+        do {
+            const uint8_t v8 = (uint8_t)val;
+            if (mm & 1u) p[0] = v8;
+            if (mm & 2u) p[1] = v8;
+            if (mm & 4u) p[2] = v8;
+            if (mm & 8u) p[3] = v8;
+            p += 4;
+            val >>= 8;
+        } while (--size);
+        if (planar_plane_single >= 0)
+            x86_vga_planar_cls_plane1 += n;
+    }
+    return 1;
+}
+#endif
+
 PLANAR_HOT void x86_vga_planar_store(uint32_t off, uint32_t val, uint32_t size)
 {
+#if !X86_VPROF && !X86_MODEY_PAGE_NEGCTL
+    if (planar_store_leaf(off, val, size))
+        return;
+#endif
     X86_VPROF_BEGIN(st);
     planar_store_body(off, val, size);
     X86_VPROF_END(st, store);

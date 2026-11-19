@@ -99,6 +99,10 @@ static uint8_t inited;
    a page. The resampler needs the chip samples either side of each output
    sample, which is what s0/s1 are -- they carry across the refill boundary so
    the chunking is inaudible. */
+/* The chunk is a fixed span of CHIP TIME (256 chip samples, ~5.15 ms), not a
+   fixed count: decimated, a refill renders OPL_CHUNK >> emu8950_decim_shift
+   samples, so a register write still lands within the same ~5 ms and the
+   idle-channel check still runs as often. OPL_CHUNK sizes the buffer. */
 #define OPL_CHUNK 256u
 #if EMU8950_EXT_MEM
 /*
@@ -173,6 +177,30 @@ static uint8_t  rhythm_on;
    engage (x86_opl_slots_run == 2 x chip_steps, which tests/test_sound.py
    FAILS on) or engage while a note was still sounding (the pitch arm fails). */
 #define OPL_EG_MAX 0x1FF
+
+/* `[sblaster] oplrate`, DOSBox's key: the rate the chip is synthesised at.
+   This core has two: the chip's own 49,716 Hz, and half of it -- each
+   rendered sample then advances two chip steps, so pitch and note timing are
+   unchanged and only the waveform is sampled less (emu8950.c). A request
+   under 37,287 Hz (three quarters of the chip rate) takes the half rate, so
+   22050 and 24858 are half and 44100, 48000 and 49716 are full. Measured on
+   the console (WOLF3D, oc 0): the FM render runs inside the guest's budget,
+   and half rate gave +8-11% fps. The audible cost is the top octave: the
+   waveform above ~12 kHz, and some aliasing of bright patches.
+   Takes effect at the next refill; the chunk in flight is dropped. */
+void x86_opl_set_rate(unsigned hz)
+{
+    uint8_t sh = (hz && hz < (X86_OPL_CLOCK_HZ * 3u) / 4u) ? 1u : 0u;
+    if (sh != emu8950_decim_shift) {
+        emu8950_decim_shift = sh;
+        chunk_pos = chunk_len;      /* next sample refills at the new rate */
+    }
+}
+
+unsigned x86_opl_rate(void)
+{
+    return X86_OPL_CLOCK_HZ >> emu8950_decim_shift;
+}
 
 void x86_opl_reset(void)
 {
@@ -289,8 +317,11 @@ void x86_opl_write(uint8_t reg, uint8_t val)
         uint32_t want = (x86_opl_now - kon_tick) / 24u;
         uint32_t ran = x86_opl_chip_steps - kon_steps;
         if (want > ran && want - ran <= OPL_CHUNK) {
-            OPL_calc_buffer_linear(opl, chunk, want - ran);
-            x86_opl_chip_steps += want - ran;
+            /* want/ran are chip steps; the render takes samples */
+            uint32_t ns = (want - ran) >> emu8950_decim_shift;
+            if (ns)
+                OPL_calc_buffer_linear(opl, chunk, ns);
+            x86_opl_chip_steps += ns << emu8950_decim_shift;
             chunk_pos = chunk_len = 0;
             pcm_n = 0;                     /* `chunk` was the queue too */
         }
@@ -387,18 +418,20 @@ static void opl_refill(unsigned n)
     OPL_calc_buffer_linear(opl, chunk, n);
     chunk_len = n;
     chunk_pos = 0;
-    x86_opl_chip_steps += n;
+    /* CHIP steps, not rendered samples: kon_steps (x86_opl_write) compares
+       this against guest time at 49,716 Hz whatever the render rate is. */
+    x86_opl_chip_steps += n << emu8950_decim_shift;
     /* What the render ACTUALLY did, so the idle-channel skip is observed and
        not assumed. emu8950's EMU8950_LINEAR_SKIP drops finished slots inside
        the loop; this is that count, sampled at the chunk boundary. */
-    x86_opl_slots_run += live * n;
+    x86_opl_slots_run += live * (n << emu8950_decim_shift);
 }
 
 unsigned x86_opl_render_mix(int16_t *dst, unsigned frames,
                             unsigned sample_rate, int16_t amplitude)
 {
     uint32_t step;
-    unsigned qn = pcm_n, qi = 0, refill = OPL_CHUNK;
+    unsigned qn = pcm_n, qi = 0, refill = OPL_CHUNK >> emu8950_decim_shift;
 
     rst_mask = 0;      /* chip time is passing now: nothing left to age */
     /* The sample stream, if there is one (see x86_opl_write). Fewer than
@@ -419,7 +452,11 @@ unsigned x86_opl_render_mix(int16_t *dst, unsigned frames,
         return 0;
     }
 
-    step = (uint32_t)(((uint64_t)X86_OPL_CLOCK_HZ << 16) / sample_rate);
+    /* The chip is synthesised at X86_OPL_CLOCK_HZ >> emu8950_decim_shift
+       (x86_opl_set_rate, `[sblaster] oplrate`): fewer, longer chip samples, the
+       same pitch and timing, and the linear interpolation below carries
+       them to the output rate. */
+    step = (uint32_t)(((uint64_t)(X86_OPL_CLOCK_HZ >> emu8950_decim_shift) << 16) / sample_rate);
     if (!step)
         step = 1;
     if (qn) {

@@ -462,6 +462,26 @@ wave table lives in, which is a real effect and not measurement noise.
 **The hand-reduced Nuked core would have been twice these numbers** -- ~21-28%
 of wall worst case -- which is what the switch bought.
 
+**THE REAL COST IS LARGER, AND IT IS IN THE GUEST'S BUDGET (2026-11-20).**
+The bench above times the render; it does not see where the render RUNS.
+`audio_pump()` refills at sub-slice boundaries INSIDE `guest_exec_ms`, so every
+cycle of FM is a cycle the guest does not get. Console, WOLF3D gameplay, oc 0,
+3 runs per arm: shipping 11.5 fps / 1.29 M ips; `X86_OPL_FM=0` 15.6-16.0 fps /
+1.67-1.72 M ips; no sound card at all (`X86_ISA_IO_TICKS=0`) 16.1 fps / 1.68 M
+-- the same as ed2ece3's August figure, so the interpreter did not regress;
+music did. The FM render took ~2.8 ms of each ~12.8 ms guest budget, about
+twice the bench's estimate.
+
+**`[sblaster] oplrate` under 37,287 Hz synthesises at HALF the chip rate**
+(`x86_opl_set_rate`; emu8950.c's `_d1` renderers advance phase, envelope and
+LFO two chip steps per rendered sample, so pitch and note timing are
+unchanged and the waveform loses its top octave). Console, alternating runs:
+11.7 -> 12.6 fps, 1.33 -> 1.44 M ips. Unset, the core runs the original
+renderers (`_d0`, in RAM_UC as before) and measured equal to the build
+without the option. A single copy reading the shift at run time was built
+and REJECTED: it spilled the loop state to the stack and cost 4% fps with the
+option off. `tests/test_sound.py --opl-rate 22050` grades it.
+
 TWO NUMBERS THAT LOOK LIKE MEASUREMENTS AND ARE NOT, recorded so nobody quotes
 them: gwemu reports 18.0 "cycles" per operator (it does not model timing; read
 it as an instruction count), and the bare-metal harness on silicon reports far

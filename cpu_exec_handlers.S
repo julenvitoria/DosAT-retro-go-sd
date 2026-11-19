@@ -2589,6 +2589,65 @@ L(GRP5_PUSH):
     PUSH_V R3, R4, R12
     B.W .fetch_decode_loop
 
+/* ------------------------------------------------------------------------
+ * Short Jcc, one handler per condition for the ten that DOS code actually
+ * runs (72-77, 7C-7F: measured 17% of all dispatched instructions in WOLF3D,
+ * 74/75/72 alone 15%). The generic handler below evaluates the condition by
+ * walking EVAL_COND's compare chain -- 13 host instructions for JZ, 37 for
+ * JLE -- and reads the displacement whether or not the jump is taken.
+ *
+ * Here the opcode table has already chosen the condition, so it is one TST of
+ * the materialised flags in R11 (CF=0 ZF=6 SF=7 OF=11), and the NOT-taken
+ * path is three instructions: test, step over the displacement, back to the
+ * dispatch. The displacement is only fetched once the jump is known to be
+ * taken, from the byte R10 has just stepped over.
+ *
+ * \tk is the HOST condition after the test that means "x86 jump taken";
+ * \nt is its inverse. JO/JNO/JS/JNS/JP/JNP stay on the generic handler.
+ * ------------------------------------------------------------------------ */
+.macro JCC_SHORT name, mask, nt
+OP \name
+    TST.W R11, #\mask
+    ADD.W R10, R10, #1
+    B\nt\().W .fetch_decode_loop
+    B.N L(JCC_TAKEN)
+.endm
+/* SF != OF, optionally OR ZF: fold OF down onto SF, keep ZF where it is. */
+.macro JCC_SHORT_SIGNED name, mask, nt
+OP \name
+    EOR.W R3, R11, R11, LSR #4      @ bit 7 = SF ^ OF, bit 6 = ZF ^ (DF) -- so
+    AND.W R3, R3, #0x80             @ ...only bit 7 is taken from here
+    AND.W R4, R11, #\mask           @ ZF (0x40) for JLE/JG, nothing for JL/JGE
+    ORRS.W R3, R3, R4
+    ADD.W R10, R10, #1
+    B\nt\().W .fetch_decode_loop
+    B.N L(JCC_TAKEN)
+.endm
+
+    JCC_SHORT .op_jb_72,  0x01, EQ
+    JCC_SHORT .op_jae_73, 0x01, NE
+    JCC_SHORT .op_jz_74,  0x40, EQ
+    JCC_SHORT .op_jnz_75, 0x40, NE
+    JCC_SHORT .op_jbe_76, 0x41, EQ
+    JCC_SHORT .op_ja_77,  0x41, NE
+    JCC_SHORT_SIGNED .op_jl_7C,  0x00, EQ
+    JCC_SHORT_SIGNED .op_jge_7D, 0x00, NE
+    JCC_SHORT_SIGNED .op_jle_7E, 0x40, EQ
+    JCC_SHORT_SIGNED .op_jg_7F,  0x40, NE
+    /* This file is assembled once per operand size, and OP expands to that
+       pass's label macro inside the bodies above: purge, so the second pass
+       defines its own. */
+    .purgem JCC_SHORT
+    .purgem JCC_SHORT_SIGNED
+L(JCC_TAKEN):
+    /* R10 is already past the displacement; it is the byte just below. Still
+       inside the dispatched instruction, so CODE_PTR is sound here. */
+    CODE_PTR R5
+    LDRSB.W R5, [R5, #-1]
+    ADD R10, R5
+    EIP_WRAP
+    B.W .fetch_decode_loop
+
 OP .op_jcc_rel8_7X
     CODE_PTR R5
     LDRSB.W R5, [R5]

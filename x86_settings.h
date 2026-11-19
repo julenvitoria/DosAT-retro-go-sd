@@ -218,6 +218,15 @@ typedef enum {
      */
     X86_SET_RETRACE_SKIP = 10,
 
+    /*
+     * `[sblaster] oplrate`, DOSBox's key: the rate the FM chip is synthesised
+     * at. Under 37,287 Hz is HALF the chip rate (24,858 Hz), anything else the
+     * full 49,716 Hz (x86_opl_set_rate). Half keeps pitch and note timing and
+     * loses the top octave of the waveform; measured +8-11% fps on WOLF3D.
+     * Default 49716 = today's sound.
+     */
+    X86_SET_OPL_RATE = 11,
+
     X86_SET_COUNT
 } x86_setting_id_t;
 
