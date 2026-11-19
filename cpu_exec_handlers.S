@@ -1245,7 +1245,7 @@ OP_AGNOSTIC .op_stosb_AA
     STR_DST R5, R12
     MEM_GET_PTR_WB R12, R5
     LDRB.W R3, [R8, #REG_EAX]
-    VGA_ST_B R3, R12, R5
+    VGA_ST STRB, 1, R3, R12, R5, x86_vga_planar_stos, 1
     STR_DELTA R7, 1
     STR_ADV REG_EDI, R7, R5
     B.W .str_exit
@@ -1254,7 +1254,7 @@ OP .op_stosd_AB
     STR_DST R5, R12
     MEM_GET_PTR R12, R5
     LDREG_V R3, #REG_EAX
-    VGA_ST_V R3, R12, R5
+    VGA_ST_STOS_V R3, R12, R5
     STR_DELTA R7, OPSZ
     STR_ADV REG_EDI, R7, R5
     B.W .str_exit

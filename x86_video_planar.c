@@ -1820,6 +1820,71 @@ PLANAR_HOT void x86_vga_planar_store(uint32_t off, uint32_t val, uint32_t size)
     X86_VPROF_END(st, store);
 }
 
+/*
+ * REP STOS INTO THE APERTURE, THE REST OF THE BATCH IN ONE CALL (2026-11-19).
+ *
+ * A STOS site's hook. The element that trapped is stored exactly as any other
+ * store is. Then, if a REP is running, the elements .str_exit would have come
+ * back for one at a time -- re-entering the handler, re-walking the fold,
+ * trapping, marshalling and calling here again, ~130 cycles each -- are
+ * stored from here, each through the same x86_vga_planar_store, and CX, DI, the batch cap and the slice
+ * budget are moved by exactly what those elements would have moved them.
+ * Wolfenstein 3-D clears its ceiling and floor with `rep stosw`, ~40 words a
+ * run: 6.1% of its guest cycles on the console, 5,195 a run.
+ *
+ * It takes only what the per-element path would have done identically:
+ *   - forwards (DF clear) and a run that stays inside the 64 KB window and
+ *     inside DI's low word, so 16- and 32-bit address sizes agree and
+ *     nothing wraps;
+ *   - a count with nothing above bit 15, so CX and ECX are the same number;
+ *   - .str_exit's two bounds, unchanged: `rep_batch`, and a slice budget
+ *     that keeps one tick, so an IRQ or a slice end lands on an element
+ *     boundary as before and guest_insns_total counts every element.
+ * Anything else returns after the one store and the interpreter carries on
+ * element by element. The handler adds this element's own delta to DI after
+ * we return; that commutes with the advance made here.
+ */
+volatile uint32_t x86_vga_stos_runs, x86_vga_stos_elems;
+
+void x86_vga_planar_stos(uint32_t off, uint32_t val, uint32_t size, uint32_t flags)
+{
+    X86CPUState *cpu = cpu_state_ptr;
+
+    x86_vga_planar_store(off, val, size);
+    if (!cpu || !cpu->rep_active || (flags & 0x400u))
+        return;
+    {
+        const uint32_t rem = cpu->regs[1];          /* ECX: elements still to go */
+        const uint32_t edi = cpu->regs[7];
+        const uint32_t di = edi & 0xFFFFu;
+        uint32_t k = rem, lim, i;
+
+        if (!rem || (rem >> 16) || cpu->pit_counter < 2u)
+            return;
+        if (k > cpu->rep_batch)
+            k = cpu->rep_batch;
+        if (k > cpu->pit_counter - 1u)
+            k = cpu->pit_counter - 1u;
+        /* this element is at `off`/DI and not yet advanced past: k more must
+           end inside the window and inside DI's 16 bits */
+        lim = (0x10000u - (off > di ? off : di)) / size;
+        if (lim < 2u)
+            return;
+        if (k > lim - 1u)
+            k = lim - 1u;
+        /* THE SAME HOOK, ONCE PER ELEMENT: whatever mode and write class is
+           armed, each element is the store it would have been. */
+        for (i = 1; i <= k; i++)
+            x86_vga_planar_store(off + i * size, val, size);
+        cpu->regs[1] = rem - k;
+        cpu->regs[7] = edi + k * size;
+        cpu->rep_batch -= k;
+        cpu->pit_counter -= k;
+        x86_vga_stos_runs++;
+        x86_vga_stos_elems += k;
+    }
+}
+
 /* ---------------------------------------------------------------------------
  * ARMING
  */
