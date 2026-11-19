@@ -343,6 +343,9 @@ void x86_pager_set_donate_pinned(int on);
 int x86_pager_policy_tick(void);
 uint32_t x86_pager_policy_reserve(void);
 uint32_t x86_pager_policy_headroom(void);   /* bytes a donation could take now */
+/* Reference ageing for the victim picker; every X86_PG_AGE_FRAMES frames, at
+   a frame boundary after the seam flush. See hot_bump() in x86_pager.c. */
+void x86_pager_age(void);
 void x86_pager_policy_enable(int on);
 void x86_pager_policy_reset(void);
 /* Floor, margin and quiet period. The harness scales them to an 8-frame pool;

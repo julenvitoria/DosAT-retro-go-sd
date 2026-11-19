@@ -419,10 +419,39 @@ void x86_pager_refold(uint32_t page)
     fold_clear(page);
 }
 
+/*
+ * THE HOTNESS BYTE IS A REFERENCE HISTORY (2026-11-19), most recent window in
+ * the top bit: a fault -- a real one, or the reinstall fault a page takes
+ * after x86_pager_age() unmapped it -- sets bit 7, and every ageing pass
+ * shifts the byte right. So "smallest byte" is "longest unreferenced", which
+ * is what the victim picker wants and what a fault COUNT never was: the count
+ * moved once per 5 s sampler window, a clock sweep halved it away, and a burst
+ * of evictions then took pages in frame order -- on the console WOLF3D in
+ * play touched 75-100 pages a window with 123 frames and still evicted two a
+ * second, each a 12 ms card write, some of them pages it wanted back at once.
+ */
 static void hot_bump(uint32_t page)
 {
-    if (pg_hot[page] < 255u)
-        pg_hot[page]++;
+    pg_hot[page] |= 0x80u;
+}
+
+/* One ageing pass: shift every resident page's history and unmap it (the
+   frame stays its own) so its next touch is seen. Same mechanism and the same
+   call site rules as x86_pager_wss_sample(): a frame boundary, after the seam
+   flush. The cost is one reinstall fault per live page per pass. */
+void x86_pager_age(void)
+{
+    if (!pg_flags || !guest_page_table_ptr)
+        return;
+    for (uint32_t f = 0; f < frame_count; f++) {
+        uint32_t page = frame_page[f];
+        if (page == NO_FRAME || page >= X86_PG_PAGES
+            || !(pg_flags[page] & PG_RESIDENT))
+            continue;
+        pg_hot[page] >>= 1;
+        if (!x86_page_is_pinned(page))
+            fold_clear(page);
+    }
 }
 
 void x86_pager_note_eip(uint32_t lin)
@@ -610,60 +639,60 @@ static void evict_frame(uint32_t f)
  * Choose a victim and free its frame. NO_FRAME means every resident page is
  * vetoed, which is the only remaining route to x86_pg_exhausted.
  *
- * Two passes of the clock. The first gives a page with any hotness left a
- * second chance and halves it; the second takes the first page the vetoes
+ * The page with the smallest reference history (see hot_bump) that the vetoes
  * allow, so a pool in which everything is hot still makes progress instead of
  * reporting exhaustion for a page it could have had.
  */
 static uint32_t evict_one(uint32_t exclude_page)
 {
+    uint32_t best = NO_FRAME, best_hot = 0x100u;
+
     if (!frame_count)
         return NO_FRAME;
     if (victim_hand >= frame_count)
         victim_hand = 0;
 
-    for (uint32_t pass = 0; pass < 2u; pass++) {
-        for (uint32_t i = 0; i < frame_count; i++) {
-            uint32_t f = victim_hand;
-            victim_hand = victim_hand + 1u;
-            if (victim_hand >= frame_count)
-                victim_hand = 0;
+    /* ONE SWEEP FROM THE HAND FOR THE LONGEST-UNREFERENCED LEGAL PAGE. The
+       hand only breaks ties, so equally cold pages still go round-robin. */
+    for (uint32_t i = 0; i < frame_count && best_hot; i++) {
+        uint32_t f = victim_hand + i;
+        if (f >= frame_count)
+            f -= frame_count;
 
-            uint32_t p = frame_page[f];
-            if (p == NO_FRAME || p >= X86_PG_PAGES)
+        uint32_t p = frame_page[f];
+        if (p == NO_FRAME || p >= X86_PG_PAGES)
+            continue;
+        if (p == exclude_page || !(pg_flags[p] & PG_RESIDENT))
+            continue;
+        if (pg_hot[p] >= best_hot)
+            continue;
+        /* The two vetoes. Pinned is display storage; the ring is a raw host
+           pointer nobody will hand back. Both are in x86_arena.h. */
+        if (x86_page_is_pinned(p) || x86_livemap_holds(p))
+            continue;
+        /* WITHOUT A PAGEFILE, ONLY A DROPPABLE PAGE MAY GO.
+         *
+         * src/main.c wires no backing store today, and evicting a modified
+         * page with nowhere to put it is not a slow path -- it is silent
+         * data loss. MEASURED on KEEN4 under gwemu before this check
+         * existed: 38 evictions, 38 x86_pg_io_errors, 38 pages of the
+         * guest's memory gone. So the picker asks the same exact question
+         * the eviction would, and a pool with nothing droppable left
+         * reports exhaustion -- a clean X86_EXIT_MEM_FAULT and a counter
+         * rather than a guest quietly reading rubbish. */
+        if (!backing_write) {
+            uint8_t *h = frame_addr(f);
+            if (!h || !page_is_clean(p, h))
                 continue;
-            if (p == exclude_page || !(pg_flags[p] & PG_RESIDENT))
-                continue;
-            /* The two vetoes. Pinned is display storage; the ring is a raw host
-               pointer nobody will hand back. Both are in x86_arena.h. */
-            if (x86_page_is_pinned(p))
-                continue;
-            if (pass == 0 && pg_hot[p]) {
-                pg_hot[p] >>= 1;            /* second chance */
-                continue;
-            }
-            if (x86_livemap_holds(p))
-                continue;
-            /* WITHOUT A PAGEFILE, ONLY A DROPPABLE PAGE MAY GO.
-             *
-             * src/main.c wires no backing store today, and evicting a modified
-             * page with nowhere to put it is not a slow path -- it is silent
-             * data loss. MEASURED on KEEN4 under gwemu before this check
-             * existed: 38 evictions, 38 x86_pg_io_errors, 38 pages of the
-             * guest's memory gone. So the picker asks the same exact question
-             * the eviction would, and a pool with nothing droppable left
-             * reports exhaustion -- a clean X86_EXIT_MEM_FAULT and a counter
-             * rather than a guest quietly reading rubbish. */
-            if (!backing_write) {
-                uint8_t *h = frame_addr(f);
-                if (!h || !page_is_clean(p, h))
-                    continue;
-            }
-            evict_frame(f);
-            return f;
         }
+        best = f;
+        best_hot = pg_hot[p];
     }
-    return NO_FRAME;
+    if (best == NO_FRAME)
+        return NO_FRAME;
+    victim_hand = best + 1u;
+    evict_frame(best);
+    return best;
 }
 
 /* ---- donating frames to the arena --------------------------------------- */
