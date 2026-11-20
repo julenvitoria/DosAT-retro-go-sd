@@ -1144,6 +1144,18 @@ int x86_pager_policy_tick(void)
         (void)x86_pager_policy_reserve();
         if (X86_PG_POLICY_NO_SHRINK || !donated_frames)
             return X86_PG_POLICY_HOLD;
+        /* A SHRINK THAT CANNOT SHRINK IS ONLY A WIPE (2026-11-20). The video
+           side answers SHRINK by returning the whole loan and borrowing again
+           inside the reserve, and what comes back is zeroed. While the loan
+           already fits the reserve that round trip lends the same frames, so
+           all it did was erase the card's second piece -- and pressure is a
+           STATE: the thrash arm holds for a whole sampler window, so it did
+           that on every tick of it. Console, KEEN4 entering Border Village:
+           600 shrink signals in one load, the card back at 65,536 offsets
+           after each, and black bands wherever the game had drawn into the
+           second piece in between. */
+        if (frame_count - donated_frames >= x86_pg_reserve_eff)
+            return X86_PG_POLICY_HOLD;
         x86_pg_shrink_signals++;
         return X86_PG_POLICY_SHRINK;
     }
