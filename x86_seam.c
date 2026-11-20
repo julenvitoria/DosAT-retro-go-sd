@@ -128,7 +128,16 @@ void x86_seam_sync(uint32_t lin)
         return;                       /* nothing above it to straddle into */
     /* The flat card's aperture is a fold miss by design (x86_vga_slow_access
        serves it); it is not a demand fault and must not sour the pool flag. */
-    if (x86_vga_readfix && page >= 0xA0u && page <= 0xAFu)
+    if (x86_vga_ega_stale && page >= 0x9Fu && page <= 0xAFu) {
+        /* 0Dh with a lazily rebuilt shadow: the access is about to read
+           past the top of this granule into the next, which the fold trap
+           will not see. Make both true now. */
+        if (page >= 0xA0u)
+            x86_vga_ega_fresh(page - 0xA0u);
+        if (page < 0xAFu)
+            x86_vga_ega_fresh(page + 1u - 0xA0u);
+    }
+    if ((x86_vga_readfix || x86_vga_ega_stale) && page >= 0xA0u && page <= 0xAFu)
         return;
 
     uint32_t k  = guest_page_table_ptr[page];

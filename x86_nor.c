@@ -354,7 +354,7 @@ void x86_nor_slow_r(uint32_t bad)
     }
 
     if (is_fold_miss(bad, &lin)) {
-        if (x86_vga_readfix && x86_vga_slow_access(lin, 0))
+        if ((x86_vga_readfix | x86_vga_ega_stale) && x86_vga_slow_access(lin, 0))
             return;
         cpu_state_ptr->nor_ptr = x86_pager_fault(lin, 0);
         if (!cpu_state_ptr->nor_ptr)
@@ -401,6 +401,22 @@ uint32_t x86_nor_cow(uint32_t bad)
     return nor_cow_locked(off);
 }
 
+void x86_nor_slow_w(uint32_t bad);
+
+/* A READ-MODIFY-WRITE site's trap. The same as the write trap except for one
+   case: a stale 0Dh shadow granule, where the site is about to READ through
+   the pointer and so must get the latch record its inline stub would have
+   made (x86_vga_slow_access, mode 2). */
+void x86_nor_slow_rmw(uint32_t bad)
+{
+    uint32_t lin;
+
+    if (x86_vga_ega_stale && is_fold_miss(bad, &lin)
+        && x86_vga_slow_access(lin, 2))
+        return;
+    x86_nor_slow_w(bad);
+}
+
 void x86_nor_slow_w(uint32_t bad)
 {
     uint32_t t0 = DWT_CYCCNT;
@@ -416,7 +432,7 @@ void x86_nor_slow_w(uint32_t bad)
     }
 
     if (is_fold_miss(bad, &lin)) {
-        if (x86_vga_readfix && x86_vga_slow_access(lin, 1))
+        if ((x86_vga_readfix | x86_vga_ega_stale) && x86_vga_slow_access(lin, 1))
             return;
         cpu_state_ptr->nor_ptr = x86_pager_fault(lin, 1);
         if (!cpu_state_ptr->nor_ptr)

@@ -154,6 +154,10 @@ void x86_vga_modey_set_page3(void *p);
 /* The flat card's VRAM accesses, from x86_nor_slow_r/_w: 1 if handled. */
 int x86_vga_slow_access(uint32_t lin, int write);
 extern volatile uint32_t x86_vga_readfix;
+/* 0Dh: granules of the read shadow that are stale (bit g), and the call that
+   makes one true again. Nonzero also marks an aperture fold miss as ours. */
+extern volatile uint32_t x86_vga_ega_stale;
+void x86_vga_ega_fresh(uint32_t granule);
 int x86_video_modey_layout_flat(void);
 extern volatile uint32_t x86_vga_modey_flat;
 
