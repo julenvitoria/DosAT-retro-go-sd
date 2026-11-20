@@ -569,6 +569,7 @@ void x86_vga_modey_set_page3(void *p)
 }
 
 static void fold_trap_set(int on);
+extern volatile uint32_t x86_vga_fold_trap_armed;
 static uint8_t *vga_cell(uint32_t a);
 extern volatile uint32_t x86_vga_fold_trap_armed;
 
@@ -605,11 +606,25 @@ volatile uint32_t x86_vga_readfix_reads;
 static uint8_t readfix_stage[8];
 
 static inline uint8_t *modey_flat_cell(uint32_t a);
+static void ega_stale_access(uint32_t a);
 int x86_vga_slow_access(uint32_t lin, int write)
 {
     uint32_t a = lin - 0xA0000u;
     uint8_t *ap = x86_vga_planar_aperture;
 
+    if (x86_vga_ega_stale && a < 0x10000u && ap && cpu_state_ptr) {
+        /* 0Dh, a granule whose shadow is stale (ega_shadow_changed): rebuild
+           it and hand the access the pointer the trap stub would have. A
+           site that READS through it (write 0, or 2 for read-modify-write)
+           records the latch, exactly as the inline stub does; a pure store
+           must not. */
+        const uint32_t ptr = (uint32_t)(uintptr_t)(ap + a);
+        cpu_state_ptr->nor_ptr = ptr;
+        if (write != 1)
+            cpu_state_ptr->vga_latch = ptr;
+        ega_stale_access(a);
+        return 1;
+    }
     if (!x86_vga_readfix || a >= 0x10000u || !ap || !cpu_state_ptr)
         return 0;
     if (write) {
@@ -1285,6 +1300,9 @@ static uint32_t ega_read_sig(void)
 
 /* The signature the shadow currently HOLDS. Set wherever the shadow is built. */
 static uint32_t ega_shadow_sig;
+/* The pages the next ega_shadow_rebuild() covers: all of them, or the sixteen
+   of one 4 KB granule when the lazy path below asks (x86_vga_ega_fresh). */
+static uint32_t ega_rb_lo, ega_rb_hi = EGA_SHADOW_PAGES;
 
 PLANAR_HOT static void ega_shadow_rebuild(void)
 {
@@ -1304,7 +1322,7 @@ PLANAR_HOT static void ega_shadow_rebuild(void)
     const uint32_t z = cell_read_w(0);
     const int zchanged = z != ega_shadow_zero;
     ega_shadow_zero = z;
-    for (uint32_t vp = 0; vp < EGA_SHADOW_PAGES; vp++) {
+    for (uint32_t vp = ega_rb_lo; vp < ega_rb_hi; vp++) {
         const uint32_t *c = ega_ptab ? (const uint32_t *)(const void *)ega_ptab[vp] : NULL;
         uint8_t *d = sh + (vp << 8);
 
@@ -1334,6 +1352,113 @@ PLANAR_HOT static void ega_shadow_rebuild(void)
     }
     }
     SHPROF_END();
+}
+
+/*
+ * THE SHADOW IS REBUILT A GRANULE AT A TIME, WHEN IT IS TOUCHED (2026-11-20).
+ *
+ * A change of read state used to rebuild all 64,000 offsets on the spot.
+ * Another World reads its 0Dh pages back plane by plane -- Read Map Select
+ * moves several hundred times a second in some scenes -- and on the console
+ * those scenes ran 100 K instructions a second with 70% of the machine
+ * inside the guest: every one of those OUTs was a whole-window rebuild, the
+ * regulator cut max_slice to its floor against the cost, and the title's
+ * 4,992 Hz clock got 600 ticks. "Frozen at the start of the game."
+ *
+ * Now a change only marks the sixteen 4 KB granules of the window stale and
+ * points their fold entries at FOLD_INVALID. The first access to a granule
+ * then arrives at x86_vga_slow_access() by the path the flat card already
+ * uses, which rebuilds THAT granule's sixteen pages, puts its fold entry
+ * back, and hands the access its pointer. A scene that reads one sprite's
+ * worth of screen per plane pays for one or two granules a switch instead
+ * of sixteen.
+ *
+ * x86_vga_ega_stale is the mask (bit g = granule g stale); nonzero is also
+ * what tells x86_nor_slow_r/_w and x86_seam.c that an aperture miss is ours.
+ * It only exists while the fold trap is armed -- without the trap a read
+ * never reaches C, and the rebuild stays eager, as before.
+ */
+volatile uint32_t x86_vga_ega_stale;
+volatile uint32_t x86_vga_ega_lazy_rebuilds;
+/* Reads served from a stale granule since the read state last moved. A title
+   that only PROBES the screen -- Another World in play switches plane two
+   thousand times a second and reads a byte or two each time -- gets those
+   bytes patched into the shadow one access at a time (EGA_STALE_PATCH of
+   them per granule) and the granule stays stale; only a reader that keeps
+   going pays for the sixteen pages. */
+#define EGA_STALE_PATCH 24u
+static uint8_t ega_stale_hits[16];
+
+static void ega_shadow_all(void)
+{
+    ega_rb_lo = 0;
+    ega_rb_hi = EGA_SHADOW_PAGES;
+    ega_shadow_rebuild();
+}
+
+/* Make granule g of the shadow true and reachable again. */
+void x86_vga_ega_fresh(uint32_t g)
+{
+    uint8_t *ap = x86_vga_planar_aperture;
+    const uint32_t bit = 1u << (g & 15u);
+
+    if (!(x86_vga_ega_stale & bit) || !ap || !guest_page_table_ptr)
+        return;
+    g &= 15u;
+    ega_rb_lo = g << 4;
+    ega_rb_hi = (g << 4) + 16u;
+    if (ega_rb_hi > EGA_SHADOW_PAGES)
+        ega_rb_hi = EGA_SHADOW_PAGES;
+    ega_shadow_zero = 0x100u;           /* fill this granule's unmapped pages */
+    ega_shadow_rebuild();
+    x86_vga_ega_stale &= ~bit;
+    x86_vga_ega_lazy_rebuilds++;
+    guest_page_table_ptr[(0xA0000u >> FOLD_SHIFT) + g] =
+        X86_FOLD_VGA_K(ap + (g << FOLD_SHIFT), (0xA0000u >> FOLD_SHIFT) + g);
+}
+
+/* An access at window offset a, in a granule that is stale or was until a
+   moment ago. The bytes it can reach are made true WHATEVER the site says it
+   is: "write" is what a site that both reads and writes declares too
+   (MEM_GET_PTR is the write trap, and XCHG, the ALU-to-memory forms and the
+   string ops' destinations read through it), and Keen 4's masked tile draws
+   came out black when a store-declared access was handed stale bytes. */
+static void ega_stale_access(uint32_t a)
+{
+    uint8_t *ap = x86_vga_planar_aperture;
+    const uint32_t g = (a >> FOLD_SHIFT) & 15u;
+
+    if (!((x86_vga_ega_stale >> g) & 1u) || ++ega_stale_hits[g] > EGA_STALE_PATCH) {
+        x86_vga_ega_fresh(g);
+        return;
+    }
+    /* The bytes this access can reach (four, and four of slack for a seam),
+       made true in place; the granule and its entry stay as they are, so the
+       next read comes back here. */
+    for (uint32_t i = 0; i < 8u; i++) {
+        const uint32_t o = a + i;
+        const uint8_t *c;
+        if (o >= EGA_SHADOW_OFFSETS)
+            break;
+        c = vga_cell(o);
+        ap[o] = c ? cell_read(c) : (uint8_t)cell_read_w(0);
+    }
+}
+
+/* The read state moved: every granule is stale from here. */
+static void ega_shadow_changed(void)
+{
+    if (!x86_vga_fold_trap_armed || x86_vga_readfix || !x86_vga_ega_armed
+        || x86_vga_modey_armed || !guest_page_table_ptr) {
+        ega_shadow_all();
+        return;
+    }
+    memset(ega_stale_hits, 0, sizeof ega_stale_hits);
+    if (x86_vga_ega_stale == 0xFFFFu)
+        return;
+    x86_vga_ega_stale = 0xFFFFu;
+    for (uint32_t g = 0; g < 16u; g++)
+        guest_page_table_ptr[(0xA0000u >> FOLD_SHIFT) + g] = FOLD_INVALID;
 }
 
 /*
@@ -1373,7 +1498,9 @@ void x86_vga_ega_reseat(const void *old, uint32_t old_offsets)
     if (x86_vga_ega_armed) {
         ega_shadow_sig = ega_read_sig();
         ega_read_prep();
-        ega_shadow_rebuild();
+        x86_vga_ega_stale = 0;
+        ega_shadow_all();
+        fold_trap_set((int)x86_vga_fold_trap_armed);    /* entries may be INVALID */
     }
 }
 
@@ -1935,9 +2062,14 @@ static void fold_trap_set(int on)
 #endif
     /* The flat card reads through C (x86_vga_slow_access): a fold MISS. */
     x86_vga_readfix = (on && x86_vga_modey_armed && x86_vga_modey_flat) ? 1u : 0u;
+    if (!on && x86_vga_ega_stale) {
+        /* No trap, no lazy path: a read goes straight at the shadow. */
+        x86_vga_ega_stale = 0;
+        ega_shadow_all();
+    }
     for (uint32_t i = 0; i < n; i++)
         guest_page_table_ptr[first + i] =
-            x86_vga_readfix ? FOLD_INVALID
+            (x86_vga_readfix || ((x86_vga_ega_stale >> i) & 1u)) ? FOLD_INVALID
             : on ? X86_FOLD_VGA_K(ap + (i << FOLD_SHIFT), first + i)
                  : FOLD_K(ap + (i << FOLD_SHIFT), first + i);
     x86_vga_fold_trap_armed = (uint32_t)on;
@@ -2084,7 +2216,8 @@ X86_UC_TEXT(x86_vga_planar_arm) int x86_vga_planar_arm(int on)
     x86_vga_ega_armed = 1;
     ega_shadow_sig = ega_read_sig();
     ega_read_prep();
-    ega_shadow_rebuild();
+    x86_vga_ega_stale = 0;
+    ega_shadow_all();
     hook_set(1);
     return 1;
 }
@@ -2134,7 +2267,7 @@ void x86_vga_planar_gc_write(unsigned idx, uint8_t val)
             return;
         ega_shadow_sig = sig;
         ega_read_prep();
-        ega_shadow_rebuild();
+        ega_shadow_changed();
     }
 }
 

@@ -523,6 +523,7 @@ int  x86_nor_attach(void *nor, uint32_t nor_bytes, void *ram, uint32_t ram_bytes
 uint32_t x86_nor_cow(uint32_t bad);   /* host-side pull-back; 0 = not NOR */
 void x86_nor_slow_r(uint32_t bad);
 void x86_nor_slow_w(uint32_t bad);
+void x86_nor_slow_rmw(uint32_t bad);
 extern volatile uint32_t x86_nor_attached, x86_nor_base_addr, x86_nor_bytes;
 extern volatile uint32_t x86_nor_pages_total, x86_nor_pages_nor, x86_nor_pages_axi;
 extern volatile uint32_t x86_nor_axi_free, x86_nor_reads, x86_nor_writes;

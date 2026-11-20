@@ -139,7 +139,11 @@
 1:      PUSH {R0-R3, R12, LR}
         MOV R0, \ptr                  @ PUSH stores, it does not clobber
     .if \wr
+      .if \latch
+        BL x86_nor_slow_rmw          @ reads through the pointer too
+      .else
         BL x86_nor_slow_w
+      .endif
     .else
         BL x86_nor_slow_r
     .endif
