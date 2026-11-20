@@ -200,7 +200,6 @@ extern volatile uint32_t x86_vga_fold_trap_armed;
 extern volatile uint32_t x86_vga_fold_trap_refused;
 
 void x86_vga_planar_stos(uint32_t off, uint32_t val, uint32_t size, uint32_t flags);
-extern volatile uint32_t x86_vga_stos_runs, x86_vga_stos_elems;
 extern volatile uint32_t x86_vga_planar_stores;   /* stores that took the hook */
 /* Stores by write class: the CPU byte straight into the enabled planes, the
    write-mode-1 latched page copy, and everything else. The mix is what says

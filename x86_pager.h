@@ -136,7 +136,11 @@ typedef int (*x86_pg_write_fn)(uint32_t slot, const void *src);
 /* What a caller must hand x86_pager_add_frames() to get `pages` frames. */
 #define X86_PG_POOL_BYTES(pages) ((pages) * X86_PG_STRIDE)
 
-#define X86_PG_TABLE_BYTES (3u * X86_PG_PAGES)
+/* Frames the pager can ever hold (x86_pager.c's arrays), and one 32-bit
+   content hash per frame after the three per-page arrays -- see
+   x86_pager.c, "A FILE PAGE THAT DID NOT CHANGE". */
+#define X86_PG_MAX_FRAMES 256u
+#define X86_PG_TABLE_BYTES (3u * X86_PG_PAGES + 4u * X86_PG_MAX_FRAMES)
 int  x86_pager_set_tables(void *block, uint32_t bytes);
 
 /* Hand the pager the AXI it may hand out, in whole pages. May be called more
@@ -369,6 +373,8 @@ extern volatile uint32_t x86_pg_fill_nor;       /* filled from NOR            */
 extern volatile uint32_t x86_pg_fill_file;      /* read back from the pagefile */
 extern volatile uint32_t x86_pg_evictions;
 extern volatile uint32_t x86_pg_drop_clean;     /* evicted with NO SD write   */
+extern volatile uint32_t x86_pg_drop_same;      /* FILE page unchanged since its fill:
+                                                   dropped, its slot still valid */
 extern volatile uint32_t x86_pg_wb_zero;        /* dirty, but became all-zero */
 extern volatile uint32_t x86_pg_wb_file;        /* written to the pagefile    */
 extern volatile uint32_t x86_pg_wb_bytes;

@@ -32,6 +32,7 @@ volatile uint32_t x86_pg_fill_nor     = 0;
 volatile uint32_t x86_pg_fill_file    = 0;
 volatile uint32_t x86_pg_evictions    = 0;
 volatile uint32_t x86_pg_drop_clean   = 0;
+volatile uint32_t x86_pg_drop_same    = 0;  /* FILE page, unchanged: no rewrite */
 volatile uint32_t x86_pg_wb_zero      = 0;
 volatile uint32_t x86_pg_wb_file      = 0;
 volatile uint32_t x86_pg_wb_bytes     = 0;
@@ -77,6 +78,7 @@ volatile uint32_t x86_pg_policy_ratchet = 0;
 static uint8_t  *pg_flags;
 static uint8_t  *pg_hot;
 static uint8_t  *pg_frame;
+static uint8_t  *frame_hash;    /* 4 B per frame, see file_hash() */
 
 int x86_pager_set_tables(void *block, uint32_t bytes)
 {
@@ -86,6 +88,7 @@ int x86_pager_set_tables(void *block, uint32_t bytes)
     pg_flags = b;
     pg_hot   = b + X86_PG_PAGES;
     pg_frame = b + 2u * X86_PG_PAGES;
+    frame_hash = b + 3u * X86_PG_PAGES;
     x86_pager_reset();
     return 0;
 }
@@ -134,7 +137,7 @@ static uint32_t ws_prev, ws_ev_mark;
  * the AXI this part can offer is not one block: RAM_EMU past the core's BSS
  * and whatever the LCD bonus pool has left are disjoint.
  */
-#define MAX_FRAMES 256u
+#define MAX_FRAMES X86_PG_MAX_FRAMES
 #define MAX_EXTENTS 4u
 
 typedef struct { uint8_t *base; uint32_t first, count; } extent_t;
@@ -518,6 +521,61 @@ static uint32_t take_free_frame(void)
  * pagefile traffic and 98.6% wasted writes do not happen here.
  */
 
+/*
+ * A FILE PAGE THAT DID NOT CHANGE IS NOT WRITTEN AGAIN (2026-11-20).
+ *
+ * A FILE-tier page has no in-memory authority to compare against, so until
+ * now it was dirty by definition: every eviction rewrote its 4 KB, at ~11 ms
+ * on the console and up to 400, whether or not the guest had touched it.
+ * WHO IT IS FOR, MEASURED ON THE CONSOLE: not WOLF3D -- every page it evicts
+ * has changed, and it gains nothing. It is the DOS/4GW titles, whose 8 MB
+ * live in a locked XMS block on the card and whose code and data are read
+ * far more than written: 72% of DOOM's evictions and 79% of Dark Forces'
+ * find the page unchanged (Dark Forces: 189 M -> 316 M instructions in the
+ * same three minutes, SD time 82 -> 45 s).
+ *
+ * So the page's contents are hashed when it is filled FROM THE FILE, and
+ * hashed again at eviction: equal means the slot still holds exactly these
+ * bytes (the ring never hands out a live slot, and nothing writes a slot but
+ * a writeback) and the page is dropped with no I/O. PG_FILE_SAME marks a
+ * resident page whose frame_hash entry is valid; it is cleared with
+ * PG_RESIDENT.
+ *
+ * 32 bits: a wrong "equal" needs a collision between a page's old and new
+ * contents, 2^-32 per changed eviction -- at two evictions a second, one in
+ * decades of continuous play. The hash lives in the table block (DTCM in the
+ * core), so a savestate carries it with the flags it belongs to.
+ */
+#define PG_FILE_SAME 0x10u
+
+/* In ITCM: RAM_EMU is within 120 B of the 0x24062000 step (one guest frame)
+   and ITCM has the room; it also runs once or twice per fault. */
+__attribute__((noinline, section(".itcram_hot.pager"))) static uint32_t file_hash(const uint8_t *p)
+{
+    const uint32_t *w = (const uint32_t *)(const void *)p;
+    uint32_t h = 0x9E3779B9u;
+    for (uint32_t i = 0; i < X86_PG_SIZE / 4u; i++) {
+        uint32_t k = w[i] * 0xCC9E2D51u;
+        k = (k << 15) | (k >> 17);
+        h ^= k * 0x1B873593u;
+        h = (h << 13) | (h >> 19);
+        h = h * 5u + 0xE6546B64u;
+    }
+    h ^= h >> 16; h *= 0x85EBCA6Bu;
+    h ^= h >> 13; h *= 0xC2B2AE35u;
+    return h ^ (h >> 16);
+}
+static uint32_t hash_get(uint32_t f)
+{
+    uint32_t v;
+    memcpy(&v, frame_hash + 4u * f, 4);
+    return v;
+}
+static void hash_set(uint32_t f, uint32_t v)
+{
+    memcpy(frame_hash + 4u * f, &v, 4);
+}
+
 /* Word-at-a-time, because a frame is 4 KB aligned and the answer is almost
    always "yes, still zero" -- which is the case that has to be cheap. */
 static int page_all_zero(const uint8_t *p)
@@ -613,7 +671,11 @@ static void evict_frame(uint32_t f)
     fold_clear(page);
 
     if (host) {
-        if (page_is_clean(page, host)) {
+        if ((pg_flags[page] & (PG_TIER_MASK | PG_FILE_SAME))
+                == (PG_TIER_FILE | PG_FILE_SAME)
+            && frame_hash && file_hash(host) == hash_get(f)) {
+            x86_pg_drop_same++;         /* the slot already holds these bytes */
+        } else if (page_is_clean(page, host)) {
             if ((pg_flags[page] & PG_TIER_MASK) == PG_TIER_FILE) {
                 /* It was dirty once and is all zeroes again: back to ZERO tier,
                    and the pagefile slot it used to own is simply abandoned. */
@@ -628,7 +690,7 @@ static void evict_frame(uint32_t f)
 
     frame_page[f]  = NO_FRAME;
     pg_frame[page] = PG_NO_FRAME;
-    pg_flags[page] &= (uint8_t)~PG_RESIDENT;
+    pg_flags[page] &= (uint8_t)~(PG_RESIDENT | PG_FILE_SAME);
     pg_hot[page] = 0;
     if (x86_pg_resident)
         x86_pg_resident--;
@@ -1259,7 +1321,18 @@ uint32_t x86_pager_fault(uint32_t lin, int write)
         x86_pg_exhausted++;
         return 0;
     }
-    fill_frame(page, host);
+    {
+        uint32_t ff0 = x86_pg_fill_file;
+        fill_frame(page, host);
+        /* Filled from its pagefile slot, and only then: remember what the
+           slot holds, so an eviction that finds it unchanged writes nothing. */
+        if (x86_pg_fill_file != ff0 && frame_hash) {
+            hash_set(f, file_hash(host));
+            pg_flags[page] |= PG_FILE_SAME;
+        } else {
+            pg_flags[page] &= (uint8_t)~PG_FILE_SAME;
+        }
+    }
     /* Prime the slack from the neighbour AS IT STANDS NOW. A page becoming
        resident takes a fresh snapshot; storing and restoring an old one is the
        stale-neighbour bug the prior port traced

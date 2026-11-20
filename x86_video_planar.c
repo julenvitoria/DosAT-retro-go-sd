@@ -1844,7 +1844,6 @@ PLANAR_HOT void x86_vga_planar_store(uint32_t off, uint32_t val, uint32_t size)
  * element by element. The handler adds this element's own delta to DI after
  * we return; that commutes with the advance made here.
  */
-volatile uint32_t x86_vga_stos_runs, x86_vga_stos_elems;
 
 void x86_vga_planar_stos(uint32_t off, uint32_t val, uint32_t size, uint32_t flags)
 {
@@ -1880,8 +1879,6 @@ void x86_vga_planar_stos(uint32_t off, uint32_t val, uint32_t size, uint32_t fla
         cpu->regs[7] = edi + k * size;
         cpu->rep_batch -= k;
         cpu->pit_counter -= k;
-        x86_vga_stos_runs++;
-        x86_vga_stos_elems += k;
     }
 }
 

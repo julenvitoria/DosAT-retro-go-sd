@@ -215,6 +215,11 @@ def main(args):
             ("  ... NOT dropped",                   p[31], 0),
             ("  ... written back",                  p[32], 1),
             ("  ... the pagefile WAS touched",      p[33], 1),
+            # 3 pages cycled read-only over 2 frames: each data page reaches
+            # the pagefile ONCE, later evictions find it unchanged (file_hash)
+            ("unchanged FILE pages: one write each", p[93], 2),
+            ("  ... dropped unwritten, bytes intact", p[94], 1),
+            ("  ... a CHANGED one is written again", p[95], 1),
 
             # The two vetoes. 5 evictions of a live-mapped page produced 26,329
             # wrong bytes in the prior port with its own counters green.
