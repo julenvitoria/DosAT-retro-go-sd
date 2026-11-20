@@ -5437,6 +5437,57 @@ static void pager_test_run(void)
     pager_r[33] = pgf_writes;                            /* 1 */
 
     /*
+     * A FILE PAGE THAT DID NOT CHANGE IS NOT WRITTEN AGAIN (x86_pager.c,
+     * file_hash). Three pages over two frames, cycled READ-ONLY: C0 and C1
+     * carry a byte each, C2 stays zero. Each of C0/C1 must reach the pagefile
+     * exactly ONCE however many times it is evicted afterwards, and come back
+     * with its byte. Then C0 is changed and must cost exactly one more write
+     * -- the half that fails if "unchanged" is ever answered wrongly.
+     */
+    x86_pager_reset();
+    x86_livemap_clear();
+    x86_pager_own(PGT_FIRST, PGT_PAGES);
+    x86_pager_add_frames(test_ram + PGT_MEM_OFF, X86_PG_POOL_BYTES(2));
+    for (uint32_t i = 0; i < PGT_PAGES; i++)
+        guest_page_table[PGT_FIRST + i] = FOLD_INVALID;
+    {
+        static const uint32_t cyc[3] = { 0xC2000u, 0xC0000u, 0xC1000u };
+        uint32_t h, ok = 1;
+        h = x86_pager_fault(0xC0000u, 1);
+        if (h) *(uint8_t *)(uintptr_t)(h + 100u) = 0x77;
+        h = x86_pager_fault(0xC1000u, 1);
+        if (h) *(uint8_t *)(uintptr_t)(h + 100u) = 0x78;
+        wf0 = x86_pg_wb_file;
+        uint32_t ds0 = x86_pg_drop_same;
+        for (uint32_t i = 0; i < 18u; i++) {
+            x86_livemap_clear();
+            x86_pager_fault(cyc[i % 3u], 0);
+        }
+        pager_r[93] = x86_pg_wb_file - wf0;              /* 2: once each */
+        x86_livemap_clear();
+        h = x86_pager_fault(0xC0000u, 0);
+        ok &= (h && *(uint8_t *)(uintptr_t)(h + 100u) == 0x77);
+        x86_livemap_clear();
+        h = x86_pager_fault(0xC1000u, 0);
+        ok &= (h && *(uint8_t *)(uintptr_t)(h + 100u) == 0x78);
+        pager_r[94] = (ok && (x86_pg_drop_same - ds0) >= 3u);  /* 1 (4 seen) */
+
+        /* Change C0 and cycle again: one more write, and the new byte back. */
+        x86_livemap_clear();
+        h = x86_pager_fault(0xC0000u, 1);
+        if (h) *(uint8_t *)(uintptr_t)(h + 100u) = 0x79;
+        wf0 = x86_pg_wb_file;
+        for (uint32_t i = 0; i < 12u; i++) {
+            x86_livemap_clear();
+            x86_pager_fault(cyc[i % 3u], 0);
+        }
+        x86_livemap_clear();
+        h = x86_pager_fault(0xC0000u, 0);
+        pager_r[95] = ((x86_pg_wb_file - wf0) == 1u
+                       && h && *(uint8_t *)(uintptr_t)(h + 100u) == 0x79);
+    }
+
+    /*
      * The two VETOES, which are the reason x86_livemap_holds() exists. The
      * prior port measured 5 evictions of a live-mapped page producing 26,329
      * wrong bytes with cow_lost == 0 green throughout.
