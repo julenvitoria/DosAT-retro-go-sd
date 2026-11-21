@@ -554,3 +554,32 @@ afterwards (the last three by the owner).
 
 **Cost.** RAM_EMU crossed the `0x24062000` step: the guest pool is 156 frames,
 not 157. ITCM had 24 B and RAM_UC 16 B, so there was nowhere else to put it.
+
+## Mode 12h (640x480, 16 colours) -- 2026-11-21
+
+Pinball Fantasies sets it for its title and its table menu. Refused, the title
+stayed in Mode X and drew 16-colour planes into a 256-colour screen: sparse
+dots on black, on every core. `x86_video_mode_log` said so in one line (tag 5,
+aux 0x12) -- read that ring FIRST when a screen is garbage.
+
+It is not a new adapter, it is the unchained card with another shifter:
+
+- **Accepted only on the flat card** (`vga_pages = 3`): 38,400 plane offsets in
+  a row exist in no other layout. `vmode_find()` refuses it otherwise, as
+  before.
+- **The mode set arms the planar path at once** (`x86_vga_modey_arm(1)`), clears
+  the whole card (`x86_vga_modey_clear`) and loads the 16-colour DAC. The
+  Sequencer's Chain-4 bit is not consulted in 12h (`vga_in_mode13()`), so
+  nothing can chain it back.
+- **The blit is `blit_vga12`**: every other pixel (the left of each pair unless
+  it is colour 0) of every other row, 320x240 exactly. With the CRTC doubling
+  scanlines (Maximum Scan Line bit 7) it is every row instead: Pinball
+  Fantasies' menu is 640x240, its title 640x480, same mode.
+- **Colours** go through the attribute palette and Colour Select
+  (`x86_vga_attr16`) to DAC indices; the panel's CLUT is the DAC, as in 13h.
+- The CRTC preset for 12h is the VGA BIOS's (07=3E 09=40 12=DF), because the
+  doubling bit above is read back.
+
+Not done: read mode 1 on the flat card, BIOS text/pixel services in 12h, and
+any presentation economy -- the loop paints both LCD buffers every frame while
+the mode is up (~5 ms each), which a menu can afford and a game could not.

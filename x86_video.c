@@ -123,6 +123,16 @@ static const x86_vmode vmodes[] = {
        card is the virtual one (x86_video_planar.c), so 16,000 visible offsets
        fit the same way Keen 4's 64 KB scrolling plane does. */
     { 0x0E, VM_EGA4, 80 },
+    /* 12h, 640x480x16 (2026-11-21). Pinball Fantasies puts its title and its
+       table menu in it; refused, the title stayed in Mode X and drew 16-colour
+       planes into a 256-colour screen -- sparse dots on black. It is the
+       UNCHAINED card with another shifter: the planar write path is Mode Y's,
+       on the flat card (`vga_pages = 3`, the only layout with 38,400 offsets
+       in a row), and only the blit differs (blit_vga12: every other pixel of
+       every other row, through the attribute palette). VM_VGA8 because
+       everything but that blit -- the aperture, the DAC, the 256-entry CLUT
+       -- is 13h's. */
+    { 0x12, VM_VGA8, 80 },
     { 0x13, VM_VGA8, 40 },
 };
 
@@ -144,6 +154,8 @@ static const x86_vmode *vmode_find(uint8_t mode)
        difference is that this one depends on an allocation. */
     if (mode == 0x13 && !x86_vga13_ok)
         return 0;
+    if (mode == 0x12 && (!x86_vga13_ok || !x86_vga_modey_flat))
+        return 0;                       /* needs the flat card: see vmodes[] */
     /* EGA 0Dh needs plane storage out of the arena, and a REFUSAL MUST BE LOUD:
        "EGA needs N more bytes than exist" is actionable, "the screen is blank"
        is not. x86_arena_would_fit() runs the real placement without committing,
@@ -554,7 +566,7 @@ static void video_render_body(uint8_t *dst, uint32_t stride)
     unsigned band = (240u - CGA_HEIGHT) / 2u;
     /* Mode X at 240 rows fills the panel: no letterbox (vga13_blit). */
     if (cur_desc && cur_desc->kind == VM_VGA8 && x86_vga_is_unchained()
-        && x86_vga_modex_rows() == 240u)
+        && (x86_vga_modex_rows() == 240u || video_mode == 0x12))
         band = 0;
     int aa = X86_TEXT_AA && x86_video_is_text() && x86_text_aa;
     /* Index 0 is CGA black everywhere EXCEPT under a per-frame anti-aliased
@@ -889,6 +901,64 @@ void x86_vga_dac_set_block(unsigned first, unsigned count, const uint8_t *rgb)
    are. */
 #define VGA13_ROW_OFFSETS  (X86_VGA13_WIDTH / 4u)
 
+/*
+ * MODE 12h ONTO THE PANEL: 640x480 in 16 colours, halved both ways -- which is
+ * exactly 320x240, the whole panel. Every other row; of each pixel pair the
+ * left one unless it is colour 0 (blit_ega16_wide's rule, for the same reason:
+ * a one-pixel stroke on a black ground survives whichever column it is in).
+ * A cell is the four plane bytes of eight pixels; the shifts below lift its
+ * even and its odd pixels into four bytes each without a table, which RAM_EMU
+ * has no room for. Colours go through the attribute palette and Colour Select
+ * (x86_vga_attr16) into DAC indices, and the panel's CLUT is the DAC.
+ */
+static void blit_vga12(uint8_t *dst, uint32_t stride)
+{
+    const unsigned pitch = x86_vga_row_pitch();
+    uint32_t addr = x86_vga_crtc_start();
+    uint8_t lut[16];
+
+    for (unsigned i = 0; i < 16u; i++)
+        lut[i] = (uint8_t)x86_vga_attr16(i);
+    /* 480 scanlines onto 240 rows: every other row of a 640x480 picture, or
+       every row of one the guest has double-scanned down to 640x240 (Pinball
+       Fantasies' menu). */
+    const unsigned step = x86_vga_scan_per_row() >= 2u ? pitch : 2u * pitch;
+
+    for (unsigned y = 0; y < 240u; y++, dst += stride, addr += step) {
+        unsigned x = 0;
+
+        while (x < 80u) {
+            const uint8_t *pb, *c;
+            uint32_t a, n;
+
+            if (!x86_vga_modey_row_at((addr + x) & 0xFFFFu, &pb, &a)) {
+                memset(dst + 4u * x, 0, 4u * (80u - x));
+                break;
+            }
+            n = 0x4000u - a;            /* the flat card: 16 K-offset chunks */
+            if (n > 80u - x)
+                n = 80u - x;
+            for (c = pb + 4u * a; n--; c += 4, x++) {
+                uint32_t e = 0, o = 0, m;
+
+                for (unsigned k = 0; k < 4u; k++) {
+                    const uint32_t b = c[k];
+                    e |= (((b >> 7) | (b << 3) | (b << 13) | (b << 23))
+                          & 0x01010101u) << k;
+                    o |= (((b >> 6) | (b << 4) | (b << 14) | (b << 24))
+                          & 0x01010101u) << k;
+                }
+                m = ((e | (e >> 1) | (e >> 2) | (e >> 3)) & 0x01010101u) * 0xFFu;
+                e = (e & m) | (o & ~m);
+                dst[4u * x]      = lut[e & 15u];
+                dst[4u * x + 1u] = lut[(e >> 8) & 15u];
+                dst[4u * x + 2u] = lut[(e >> 16) & 15u];
+                dst[4u * x + 3u] = lut[(e >> 24) & 15u];
+            }
+        }
+    }
+}
+
 static void vga13_blit(uint8_t *dst, uint32_t stride)
 {
     const uint8_t *src = vga_aperture;
@@ -919,6 +989,10 @@ static void vga13_blit(uint8_t *dst, uint32_t stride)
      * a non-zero CRTC display start and a non-standard Offset render correctly.
      * At start 0 and Offset 40 it reduces to the loop above exactly.
      */
+    if (video_mode == 0x12) {
+        blit_vga12(dst, stride);
+        return;
+    }
     const unsigned pitch = X86_MODEY_STRIDE_NEGCTL ? x86_vga_row_pitch() / 2u
                                                    : x86_vga_row_pitch();
     const unsigned start = x86_vga_crtc_start();
@@ -1855,6 +1929,8 @@ static int mode_select(uint8_t mode)
         }
     } else {
         x86_vga_planar_arm(0);
+        if (mode == 0x12)
+            x86_vga_modey_arm(1);       /* planar from the mode set on */
     }
 
     x86_video_log_event(1, d->cols, mode);
@@ -1909,8 +1985,10 @@ void x86_video_set_mode(uint8_t mode)
     x86_video_log_event(6, mode, video_mode);
     if (!mode_select(mode))
         return;
-    if (cur_desc->kind == VM_EGA4)
+    if (cur_desc->kind == VM_EGA4 || mode == 0x12)
         dac_load_ega200();              /* the BIOS reloads it; see above */
+    if (mode == 0x12)
+        x86_vga_modey_clear();          /* the whole card, not just page 0 */
     cur_row = cur_col = 0;
     text_scroll_col = 0;
     if (!cga_storage_ok()) {

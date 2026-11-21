@@ -766,6 +766,10 @@ void x86_speaker_render(int16_t *dst, unsigned frames, unsigned sample_rate,
 extern uint32_t (*x86_io_time_ms)(void);
 extern void *(*x86_io_alloc)(uint32_t bytes);  /* host buffers (SB direct DAC) */
 void x86_vga_ega_ss_save(void);
+void x86_vga_modey_clear(void);
+unsigned x86_vga_attr16(unsigned n);
+unsigned x86_vga_scan_per_row(void);
+extern volatile uint32_t x86_vga_modey_flat;
 void x86_vga_ega_ss_loaded(void);
 extern volatile uint32_t x86_spk_events;          /* frequency changes logged */
 extern volatile uint32_t x86_spk_events_dropped;  /* ring overflows           */

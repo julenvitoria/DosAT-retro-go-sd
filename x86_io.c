@@ -761,6 +761,22 @@ unsigned x86_vga_split_row(void)
     return row < x86_vga_modex_rows() ? row : 0xFFFFu;
 }
 
+/* Scanlines per row of the picture: 2 when the CRTC doubles (bit 7 of the
+   Maximum Scan Line register, or a cell two scanlines high). */
+unsigned x86_vga_scan_per_row(void) { return vga_scan_per_row(); }
+
+/* Pixel value n of a 16-colour mode as a DAC index: the attribute palette,
+   with Colour Select supplying bits 7-6 always and bits 5-4 when the Mode
+   Control register says so (bit 7). */
+unsigned x86_vga_attr16(unsigned n)
+{
+    unsigned v = vga_regs.attr[n & 15u] & 0x3Fu, cs = vga_regs.attr[0x14];
+
+    if (vga_regs.attr[0x10] & 0x80u)
+        v = (v & 0x0Fu) | ((cs & 3u) << 4);
+    return v | ((cs & 0x0Cu) << 4);
+}
+
 /* Attribute Controller index 0x13, low 3 bits: the horizontal pel pan, in
    pixels. A scrolling EGA title reprograms it every frame. */
 unsigned x86_vga_pel_panning(void) { return vga_regs.attr[0x13] & 7u; }
@@ -783,7 +799,7 @@ X86_UC_TEXT(x86_vga_crtc_preset) void x86_vga_crtc_preset(uint8_t mode)
 {
     vga_regs.crtc[0x0C] = 0;
     vga_regs.crtc[0x0D] = 0;
-    vga_regs.crtc[0x13] = (mode == 0x13 || mode == 0x0E) ? 0x28 : 0x14;
+    vga_regs.crtc[0x13] = (mode == 0x13 || mode == 0x0E || mode == 0x12) ? 0x28 : 0x14;
     /* The vertical registers the Mode X geometry reads (x86_vga_modex_rows,
        x86_vga_split_row), at a VGA BIOS's values: 400 scanlines, every row
        twice (0Dh: 0xC0 doubles too), Line Compare 0x3FF = no split. Left at
@@ -792,6 +808,13 @@ X86_UC_TEXT(x86_vga_crtc_preset) void x86_vga_crtc_preset(uint8_t mode)
     vga_regs.crtc[0x09] = (mode == 0x13) ? 0x41 : 0xC0;
     vga_regs.crtc[0x12] = 0x8F;
     vga_regs.crtc[0x18] = 0xFF;
+    if (mode == 0x12) {
+        /* 480 scanlines, one per row, as the VGA BIOS sets them. blit_vga12
+           reads the doubling bit: a title that turns it on wants 640x240. */
+        vga_regs.crtc[0x07] = 0x3E;
+        vga_regs.crtc[0x09] = 0x40;
+        vga_regs.crtc[0x12] = 0xDF;
+    }
     /* Identity attribute palette. Pixel value n -> DAC entry n, which in a VGA
        DAC IS the sixteen EGA colours -- IBM's 00 01 02 03 04 05 14 07 38.. are
        indices into a 64-entry EGA DAC layout and would recolour every EGA-16

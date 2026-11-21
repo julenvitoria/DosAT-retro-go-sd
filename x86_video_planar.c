@@ -595,6 +595,21 @@ extern volatile uint32_t x86_vga_fold_trap_armed;
 static uint8_t *vga_cell(uint32_t a);
 extern volatile uint32_t x86_vga_fold_trap_armed;
 
+/* Every plane byte the unchained card has, to zero: a planar mode set (12h)
+   promises a blank card, and only page 0 is the aperture the 13h set clears. */
+void x86_vga_modey_clear(void)
+{
+    if (x86_vga_planar_aperture)
+        memset(x86_vga_planar_aperture, 0, X86_VGA_APERTURE_BYTES);
+    for (unsigned i = 0; i < 2u; i++)
+        if (modey_pgstore[i])
+            memset(modey_pgstore[i], 0, 4u * X86_MODEY_PLANE);
+    if (modey_page3)
+        memset(modey_page3, 0, 4u * X86_MODEY_PLANE);
+    if (modey_cache)
+        memset(modey_cache, 0, 4u * modey_cache_offs);
+}
+
 void x86_vga_modey_set_flat(int on)
 {
     x86_vga_modey_flat = (on && modey_pgstore[1]) ? 1u : 0u;

@@ -142,7 +142,7 @@ means the owner played it himself.
 | Ironman | "Are you using a joystick (Y/N)" | plays (owner); the launch sequence needs N, then 3 for AdLib |
 | Doom | its demo, in < 4 min | ~0.2 fps, ~80 faults a second: RAM-bound (docs/12 §9b) |
 | Dark Forces | past "Mouse driver not installed, press any key", into the intro | intro picture striped (its .cfg has no `vga_pages`); loads 67% faster than before |
-| Pinball Fantasies | intro | drawn wrong, identically on `e1c677c`: pre-existing, cause unknown (owner suspects memory) |
+| Pinball Fantasies | intro, menu, Partyland | **FIXED 2026-11-21**, two causes, neither memory: the logos need the flat card (`vga_pages = 3`, `examples/cfg/PINFANT.cfg`), and the title and the table menu are in mode 12h, which was refused -- now a mode ([`docs/08`](08_vga_mode13h.md), "Mode 12h"). Console: logos, title, menu and the Partyland table drawn right; ~54 host fps, 2.5 M insns/s on the table |
 
 ## The non-regression baseline
 
