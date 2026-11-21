@@ -559,3 +559,73 @@ AXI matrix. So an aperture in DTCM forecloses Queue B5's DMA2D A/B of the
 chained 13h blit entirely: the engine would have nothing it could read. This is
 recorded so it is not rediscovered as a bug in the DMA2D path. `X86_VIDEO_DMA2D`
 defaults to 0, so there is no conflict today.
+
+## 9. The pager pass of 2026-11-19..21 — three rules changed, all measured on the console
+
+Every number here is tier 3 (console, overclock 0). The tools are in
+[`TOOLING.md`](../TOOLING.md), "Playing a title on the console".
+
+### 9a. Victims by reference AGE, not frame order (`d20f8ae`)
+
+`pg_hot` was a fault COUNT: +1 at a real fault, +1 per 5 s working-set window,
+halved by every clock sweep. Under a burst of evictions the sweep zeroed it for
+everything and victims went in frame order -- some of them pages the guest
+wanted straight back. It is now a reference HISTORY, newest window in the top
+bit: any fault sets bit 7; `x86_pager_age()`, every `X86_PG_AGE_FRAMES` (30)
+frames at the frame boundary after the seam flush, shifts it and unmaps the
+resident pages (the working-set sampler's own mechanism) so the next touch is
+seen. `evict_one()` makes one sweep from the hand for the smallest history the
+vetoes allow.
+
+WOLF3D in play touches 75-112 pages per 5 s window with 123 frames, and was
+still evicting two a second. `wolf3d-shoot.tl`, 30 s of play, 2+2: evictions
+53/51 -> 36/33, SD time 1,328/1,378 -> 1,077/973 ms, audio halves missed 37/38
+-> 27/25. The price is ~3,200 reinstall faults per 30 s.
+
+### 9b. A FILE page that did not change is not written again (`ec8281d`)
+
+A FILE-tier page had no in-memory authority, so every eviction rewrote its
+4 KB (~12 ms). Its contents are hashed (32 bits, in the pager's table block:
+`X86_PG_TABLE_BYTES` + 1,024) when it is filled from the pagefile and again at
+eviction; equal means the slot still holds these bytes and the page is dropped
+with no I/O (`x86_pg_drop_same`). Sound because the slot ring never hands out a
+live slot and only a writeback writes one.
+
+**Who it is for.** Not WOLF3D: every page it evicts has changed, and it gains
+nothing (measured twice, before and after it landed). It is the DOS/4GW titles,
+whose 8 MB live in a locked XMS block ON THE CARD and are read far more than
+written:
+
+| 180 s on the console | before | after |
+|---|---|---|
+| Dark Forces from its mouse notice, instructions | 189 M | 316 M |
+| Dark Forces, SD time | 82 s | 45 s |
+| Dark Forces, evictions dropped unwritten | 0 | 6,508 of 8,247 |
+| Doom in its demo, instructions per 10 s | ~1.3 M | ~2.3 M |
+
+**Doom is still ~0.2 fps**: ~80 faults a second on ~122 frames. It is short of
+RAM, not of CPU, and no rule in this section changes that. What would is the
+project's original design -- read-mostly pages backed by memory-mapped NOR,
+which needs no frame at all (`X86_NOR_SNAP` is compiled out today).
+
+### 9c. No SHRINK that cannot shrink (`9e139a7`)
+
+The video side answers `X86_PG_POLICY_SHRINK` by returning the whole loan and
+borrowing again inside the reserve, and what comes back is ZEROED. Pressure is
+a state, not an event -- the thrash arm holds for a whole sampler window -- so
+while the loan already fitted the reserve that round trip lent the same frames
+on every tick and its only effect was to erase the EGA card's second piece.
+KEEN4 entering Border Village: 600 shrink signals in one level load and black
+bands where the game had drawn in between. Intermittent (it depends on where
+the window falls) and present in `e1c677c` too: four runs of nine.
+
+`x86_pager_policy_tick()` now holds unless `frame_count - donated_frames <
+reserve_eff`. After: shrink signals 1-2, evictions ~122 -> ~83, the level whole
+in two runs of three and one small box in the third.
+
+**Still open.** A real shrink drops what it cannot evacuate, and in the level
+the card sits at 57,344 of 65,536 offsets with `reserve_eff` 130 (the ratchet
+from the load peak) while `ws_est` is 59 -- the guest could spare the nine
+frames a full card needs, but the policy allows one second piece per session
+and a re-fit wipes it. Growing and shrinking the second piece IN PLACE is the
+fix; it is a design change and is not built.

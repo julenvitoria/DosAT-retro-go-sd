@@ -2834,6 +2834,44 @@ implements the grammar above, from the source, and `tests/test_timeline.py
 to gameplay: TIME answers the joystick prompt with N, then the skill menu needs
 a LETTER, which is only reachable through the on-screen keyboard.
 
+### Playing a title on the console — `console_play.py`
+
+Tier 3 only. Drives the real device over the ST-Link: launch a ROM, press and
+hold buttons a step at a time, and capture what the PANEL shows after each
+step. Use it whenever a change touches video reads or stores, the pager or the
+clocks -- counters do not say whether the picture is right or what a title
+does once it is played (rationale and the three cases that taught this are in
+the module docstring).
+
+```sh
+python3 scripts/console_play.py save-config          # FIRST, once per session
+python3 scripts/console_play.py launch KEEN4.dsk     # preselect + reset + wait 16 s
+python3 scripts/console_play.py step build/core/dos_core.elf build/artifacts/k1.png \
+        "1 press start; 4 press a; 7 hold left 2"    # then captures the panel
+python3 scripts/console_play.py shot  build/core/dos_core.elf build/artifacts/k2.png
+python3 scripts/console_play.py watch build/core/dos_core.elf -n 7 -i 10
+python3 scripts/console_play.py restore-config       # LAST: verified byte for byte
+```
+
+- The ELF must be the one whose `dosat.bin` is on the card
+  (`deploy_device.py --no-firmware --core ...`).
+- `step` times are seconds from the attach; verbs are the timeline's (`press
+  KEY`, `hold KEY SECONDS`). Button names are the pad's; what each sends is the
+  title's `.cfg` on the card.
+- `watch` prints one line per interval: host fps, instructions/s, SD share,
+  evictions (and how many went unwritten), IRQ 0 ticks delivered and dropped,
+  planar stores, `max_slice`, video mode. **Sample sparsely** -- every sample
+  halts the CPU; 0.5 s sampling cost Pinball Dreams 2 four frames a second.
+- `save-config` / `restore-config` exist because `deploy_device.py --preselect`
+  keeps ONE backup of `/CONFIG` and a second `--preselect` overwrites it with a
+  preselecting copy, and because the owner's `/CONFIG` changes whenever he
+  plays. `launch` refuses to run before `save-config`.
+- From a git worktree with no `references/` build of its own, pass
+  `--firmware-dir <main checkout>/references/game-and-watch-retro-go-sd/build`
+  before the subcommand.
+- Captures read 256 palette entries; the `screenshot.py` default makes a
+  256-colour title look dark grey.
+
 ### Replaying a timeline on REAL HARDWARE
 
 `--timeline FILE.tl` means the same thing on every tier: the tests do not know

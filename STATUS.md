@@ -45,20 +45,20 @@ Wolf3D, Mode Y, **hardware**, gated gameplay window, **% of WALL**. Method: [`do
 | Mode Y blit + paint | 0.84 |
 | residual (root-zone self-time, measured not derived) | 0.05 |
 
-An aperture byte store costs **171 cyc**; the same store to ordinary memory **55**. **Open and sized:** `REP STOSW`'s per-element hook (~3%), aperture reads (~4.5%), the 1,242-cyc `OUT`. **Measured and REJECTED** — the list with its numbers is in [`CLAUDE.md`](CLAUDE.md), which every agent reads first.
+The table is the 2026-08 baseline. **Re-profiled 2026-11-20 (guest cycles, not wall):** `88` aperture byte store **24.3%** at **151 cyc** (55 to ordinary memory) is the largest single item left; `REP STOSW` was 6.1% and is now batched; port I/O is 3.3% in total. **Open and sized:** the 151-cyc store, aperture reads on the flat card (a C call each, by design). **Measured and REJECTED** — the list with its numbers is in [`CLAUDE.md`](CLAUDE.md), which every agent reads first.
 
 ## Budgets — `python3 scripts/budget_gate.py` IS the measurement
 
 It forces a real re-link, refuses a stale ELF, and exits non-zero when ITCM, `__CORE_BSS_END__`, the implied frame count or `docs/07` regressed. Thresholds live in `tests/budgets.json` and carry the date they were taken.
 
-| | value — `tests/budgets.json`, recorded 2026-11-19, stock flags, forced re-link |
+| | value — `tests/budgets.json`, recorded 2026-11-21, stock flags, forced re-link |
 |---|---|
-| ITCM | `__CORE_ITCM_CODE_END__` = **0xFB88** — **64,392 B used, 1,144 B free** of 65,536 (2026-11-19). The 3,832 B quoted here until then was two months stale |
-| RAM_EMU | `__CORE_BSS_END__` = **0x24061480** (2026-11-19). It MOVES every merge — measure it (`arm-none-eabi-nm build/core/dos_core.elf \| grep __CORE_BSS_END__`), never quote it. Frame stride is **4,104**, not 4,096 (granule-seam slack); a full 160-frame pool wants **656,640 B** |
+| ITCM | `__CORE_ITCM_CODE_END__` = **0xFFE8** — **24 B free** of 65,536 (2026-11-21). FULL: new hot code needs something moved out first |
+| RAM_EMU | `__CORE_BSS_END__` = **0x240621C8** (2026-11-21) — past the `0x24062000` step, so the guest pool is **156 frames**, not 157 (WOLF3D measured equal either side). It MOVES every merge — measure it, never quote it. Frame stride is **4,104**, not 4,096 (granule-seam slack); a full 160-frame pool wants **656,640 B** |
 | DTCM | **5,856 B** free (`core_dtcm_headroom_max`); the pool ends at `__dtc_padding_end__` = `0x2001A000`, not `0x20020000` — the 24 KB above it is the main stack ([`docs/12`](docs/12_memory_tiers.md) §8). Not an escape hatch for instruments |
 | arena | 143,360 B — check `x86_arena_largest`, not `_free`; claims fragment |
 
-**SPEED WORK (2026-11-19, branch `claude/dosat-x86-speed-9kraec`).** Baseline re-verified with Arm GNU Toolchain 15.2.Rel1: tier 1 green (`test_opcodes` 805/805, three stale KBD cases and `test_disk_cache`'s host shim fixed), WOLF3D golden 0.000% (the gate now reads the firmware's 256-slot `active_clut`). **ALLEYCAT's golden is STALE** (58%: the title now asks "use a joystick?" first) and needs a re-capture verified by eye. Where the ~57 cyc go, the opcode counts and the ordered plan: [`docs/02`](docs/02_cpu_pipeline_optimization.md) §8. **A1 (dedicated short Jcc, `0996688`) is built and gated but its tier-3 gain is UNMEASURED** -- measure `guest_ips_achieved` and `x86_modey_presents`/s against base `5699d99` before building on it. The frame-count question in the first section is settled (151 measured; this build's static bound is 158).
+**SPEED + PAGER PASS (2026-11-19..21, merged from `combined`; every number tier 3, console, oc 0).** WOLF3D gameplay **13.0 -> ~18 fps**: dedicated short `Jcc`, half-rate FM (`[sblaster] oplrate`, opt-in), the planar store leaf, a 32-bit `x86_pit_sync`, `REP STOS` into the aperture batched in one call. Pager: victims by reference AGE not frame order (WOLF3D evictions -34%), an unchanged FILE page is not rewritten (Dark Forces 189 M -> 316 M insns per 3 min; Doom +70% and still ~0.2 fps -- RAM-bound), no policy SHRINK that cannot shrink (it wiped Keen 4's second card piece 600 times a level load). EGA 0Dh read shadow rebuilt per 4 KB granule on access: **Another World plays** (game start 0.03 M -> 1.85 M insns/s, its 4,992 Hz IRQ 0 delivered whole). `vsync_lock`/`retrace_skip` for the pinball titles. Detail: [`docs/12`](docs/12_memory_tiers.md) §9, [`docs/08`](docs/08_vga_mode13h.md) §6, [`docs/13`](docs/13_title_status.md) "Console pass".
 
 ## What is broken right now
 
