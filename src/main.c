@@ -673,7 +673,7 @@ static uint32_t   rate_window_frames;
    60 fps, so every slower frame threw ticks away -- measured as ~351 of 473
    per second, with guest_ticks_dropped climbing ~100/s. 24 covers 473 Hz
    down to 20 fps and 560 Hz down to 24. */
-#define TICK_CARRY_MS           4u    /* collided ticks carried to the next frame */
+#define TICK_CARRY_MS          16u    /* collided ticks carried to the next frame */
 #define TICK_MIN_INSNS 2500u   /* see the phase plan: no closer ticks than this */
 #define TICK_IRQ_MAX          512u
 #define TICK_STALL_MS        1000u    /* longer than this is a stall, not lag */
@@ -5527,11 +5527,14 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                with slowed Rick 2's music and movement by a quarter. Beyond two
                it is a stall, not a collision -- counted as dropped, so a long
                CLI does not come back as a burst. */
-            /* ...AND TWO IS A TIME TOO, at a fast clock: 4 ms of ticks where
-               that is more. Another World mixes its music in a 4,992 Hz
-               handler, 83 ticks a frame; the few a frame that found the last
-               one still in service were thrown away at up to 220 a second,
-               and the music ran that much slow (console, 2026-11-21). */
+            /* ...AND TWO IS A TIME TOO, at a fast clock: a frame's worth of
+               ticks (16 ms) where that is more. Another World mixes its music
+               in a 4,992 Hz handler, 83 ticks a frame; the few a frame that
+               found the last one still in service were thrown away at up to
+               220 a second, and the music ran that much slow. 4 ms was tried
+               first and still lost bursts of ~30 where the elevator scene's
+               planar copies start -- no disk, no paging in that second -- which
+               the owner heard; 16 loses none (console, 2026-11-21). */
             uint32_t carry = (TICK_CARRY_MS * 1193u) / div;
             if (carry < 2u)
                 carry = 2u;

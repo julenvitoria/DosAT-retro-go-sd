@@ -87,9 +87,11 @@ Two things had to move with it:
   learner latched 14 ms off a 16.7 ms panel (Wolf3D lost 12% of its slice until
   this was found). The period is measured between the ends of two consecutive
   waits, floored at `PANEL_MS_LATE_FLOOR` (16) against a late wake.
-- **Collided ticks are carried by TIME** (`TICK_CARRY_MS`, 4 ms of ticks, never
+- **Collided ticks are carried by TIME** (`TICK_CARRY_MS`, 16 ms of ticks, never
   fewer than the old 2). A 4,992 Hz clock is 83 ticks a frame and the few that
-  found the last one in service were being dropped.
+  found the last one in service were being dropped. 4 ms still lost bursts of
+  ~30 at the start of Another World's elevator scene (heard by the owner); 16
+  loses none over the whole intro.
 
 Tier 3, console, same day, before -> after (few far-apart samples):
 
@@ -97,7 +99,7 @@ Tier 3, console, same day, before -> after (few far-apart samples):
 |---|---|---|
 | Another World intro, host fps | 47 | 53-60 |
 | Another World, insns/s | 1.3-2.1 M | 1.8-2.8 M |
-| Another World, music ticks/s of 4,992 (worst 3 s) | 4,243 | 4,967 |
+| Another World, music ticks/s of 4,992 (worst window) | 4,243 | 4,972, 0 dropped |
 | Wolf3D walk, game fps (mean of 5 windows) | 18.6 | 21.6 |
 | Wolf3D, insns/s | 2.0 M | 2.34 M |
 | Pinball Dreams 2 (paced, `vsync_lock`) | 59.7 fps, 0 dropped | the same |
