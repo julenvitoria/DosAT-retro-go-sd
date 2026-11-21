@@ -363,9 +363,10 @@ void x86_livemap_clear(void)
     livemap_armed = 0;
 }
 
-/* In ITCM: asked once per candidate by the pager's victim sweep, and RAM_EMU
-   is within bytes of the 0x24062000 step. */
-__attribute__((section(".itcram_hot.pager"))) int x86_livemap_holds(uint32_t page)
+/* Was in ITCM only because RAM_EMU had no room (2026-11-19). It is asked once
+   per candidate by the pager's victim sweep, which is not hot: back in RAM_EMU
+   since x86_x87.c stopped pulling libgcc's soft double in (2026-11-21). */
+int x86_livemap_holds(uint32_t page)
 {
     /* The ring is .bss, so it starts as sixteen zeroes -- and page 0 is a real,
        constantly used page. Without this guard every eviction of page 0 would

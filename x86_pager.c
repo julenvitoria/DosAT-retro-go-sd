@@ -566,9 +566,9 @@ static uint32_t take_free_frame(void)
  */
 #define PG_FILE_SAME 0x10u
 
-/* In ITCM: RAM_EMU is within 120 B of the 0x24062000 step (one guest frame)
-   and ITCM has the room; it also runs once or twice per fault. */
-__attribute__((noinline, section(".itcram_hot.pager"))) static uint32_t file_hash(const uint8_t *p)
+/* Once or twice per fault. It sat in ITCM while RAM_EMU had no room; ITCM is
+   the scarcer of the two now (2026-11-21), so it is back here. */
+__attribute__((noinline)) static uint32_t file_hash(const uint8_t *p)
 {
     const uint32_t *w = (const uint32_t *)(const void *)p;
     uint32_t h = 0x9E3779B9u;
