@@ -2845,7 +2845,7 @@ the module docstring).
 
 ```sh
 python3 scripts/console_play.py save-config          # FIRST, once per session
-python3 scripts/console_play.py launch KEEN4.dsk     # preselect + reset + wait 16 s
+python3 scripts/console_play.py launch KEEN4.dsk     # preselect + reset + wait 16 s; SILENT (--volume 0-9 to hear it)
 python3 scripts/console_play.py step build/core/dos_core.elf build/artifacts/k1.png \
         "1 press start; 4 press a; 7 hold left 2"    # then captures the panel
 python3 scripts/console_play.py shot  build/core/dos_core.elf build/artifacts/k2.png

@@ -61,6 +61,13 @@ def main():
                         "level already in the device's /CONFIG, which is the "
                         "point of the backup -- a compose otherwise RESETS a "
                         "level set through the launcher UI")
+    p.add_argument("--volume", type=int, default=4, choices=range(0, 10),
+                   metavar="0-9",
+                   help="launcher volume for --preselect (default 4, what a "
+                        "compose always wrote). 0 is silent: the core mixes "
+                        "exactly the same and only the amplitude is zero, so "
+                        "it changes no measurement. --restore-config puts "
+                        "the owner's own volume back")
     args = p.parse_args()
 
     intflash = os.path.join(args.firmware_dir, "gw_retro_go_intflash.bin")
@@ -127,6 +134,7 @@ def main():
         startup = rom_path("dos", os.path.basename(args.preselect))
         gnw.sd_write_file("/CONFIG", build_config(startup_file=startup,
                                                   menu_timeout_s=0,
+                                                  volume=args.volume,
                                                   cpu_oc_level=oc))
         print(f"/CONFIG now preselects {startup}")
 

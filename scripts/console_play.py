@@ -107,7 +107,8 @@ def cmd_launch(a):
     if not os.path.exists(ORIG):
         sys.exit("no saved /CONFIG: run save-config first")
     r = py("scripts/deploy_device.py", "--no-firmware", "--no-core",
-           "--preselect", a.rom, "--oc-level", str(a.oc), capture_output=True)
+           "--preselect", a.rom, "--oc-level", str(a.oc),
+           "--volume", str(a.volume), capture_output=True)
     print("\n".join(l for l in r.stdout.splitlines()
                     if "preselect" in l or "rror" in l))
     shutil.copy(ORIG, BACKUP)       # --restore-config must give back the owner's
@@ -197,6 +198,10 @@ def main():
     p.add_argument("rom")
     p.add_argument("--wait", type=float, default=16.0)
     p.add_argument("--oc", type=int, default=0)
+    p.add_argument("--volume", type=int, default=0,
+                   help="launcher volume while testing, 0-9 (default 0: "
+                        "silent -- the console sits on someone's desk and the "
+                        "core mixes the same at any volume)")
     p.set_defaults(fn=cmd_launch)
     p = sub.add_parser("shot")
     p.add_argument("elf")
