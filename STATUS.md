@@ -36,7 +36,7 @@ Wolf3D, Mode Y, **hardware**, gated gameplay window, **% of WALL**. Method: [`do
 
 | block | % wall |
 |---|---|
-| idle waiting for the panel (vsync-quantised, not freely convertible) | 27.0 |
+| idle waiting for the panel — **mostly reclaimed 2026-11-21** (wait before the draw, [`docs/09`](docs/09_frame_pacing_and_clocks.md) §3a: Wolf3D 18.6 → 21.6 fps); this table predates it | 27.0 |
 | **planar store hook** | **25.0** |
 | **interpreter excluding the hook** — of which: | **47.1** |
 | — ordinary opcodes, the guest's own work, **~57 cyc/insn** ← LARGEST BLOCK | 29.4 |

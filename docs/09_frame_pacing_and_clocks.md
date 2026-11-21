@@ -70,6 +70,42 @@ This is why the optimum is just **inside** the deadline and why overshooting by
 3 ms costs 16.7. It is also why `GUEST_EXEC_PCT` is a cliff-edge tuning knob
 rather than a smooth one: 90% produced 4.2 dropped frames, 85% did not.
 
+### 3a. Not any more: the wait is taken before the DRAW (2026-11-21)
+
+All of the above was true because the loop waited for the vblank right after
+`lcd_swap()`, with nothing to do. `X86_SWAP_WAIT_LATE` (default 1,
+`swap_wait()` in `src/main.c`) takes that wait just before the next frame is
+drawn instead, so the next guest slice RUNS while the flip is pending. The loop
+is still paced by the panel, one vblank per iteration, but a slice that overruns
+costs its overrun and nothing else. `GUEST_EXEC_PCT` is 90 again for that
+reason.
+
+Two things had to move with it:
+
+- **`panel_ms_min` no longer learns from the iteration's length.** Iterations
+  used to END on a vblank; now a late frame is followed by a short one, and the
+  learner latched 14 ms off a 16.7 ms panel (Wolf3D lost 12% of its slice until
+  this was found). The period is measured between the ends of two consecutive
+  waits, floored at `PANEL_MS_LATE_FLOOR` (16) against a late wake.
+- **Collided ticks are carried by TIME** (`TICK_CARRY_MS`, 4 ms of ticks, never
+  fewer than the old 2). A 4,992 Hz clock is 83 ticks a frame and the few that
+  found the last one in service were being dropped.
+
+Tier 3, console, same day, before -> after (few far-apart samples):
+
+| title | before | after |
+|---|---|---|
+| Another World intro, host fps | 47 | 53-60 |
+| Another World, insns/s | 1.3-2.1 M | 1.8-2.8 M |
+| Another World, music ticks/s of 4,992 (worst 3 s) | 4,243 | 4,967 |
+| Wolf3D walk, game fps (mean of 5 windows) | 18.6 | 21.6 |
+| Wolf3D, insns/s | 2.0 M | 2.34 M |
+| Pinball Dreams 2 (paced, `vsync_lock`) | 59.7 fps, 0 dropped | the same |
+
+Keen 4 (Border Village, walking left) was looked at on the panel: clean. Nothing
+is drawn into the frame buffer while a flip is pending except Mode Y's own
+paint-both, which already painted the visible buffer by design.
+
 ## 4. The three clocks, none of them a hardcoded 60
 
 1. **Display** — the panel's own swap signal; the period is *learned*, so an

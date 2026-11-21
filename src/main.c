@@ -614,14 +614,20 @@ static uint32_t   rate_window_frames;
  * timer interrupt ~55 ms away, i.e. 3.3 frames. A real 386 idles there too.
  * No value of this constant recovers it; the lever is the guest's tick rate,
  * which is the guest's business.
+ *
+ * 90 AGAIN (2026-11-21), because the cliff is gone: with X86_SWAP_WAIT_LATE
+ * the wait for the vblank is taken before the frame is drawn and the guest
+ * runs through it, so a slice that overruns costs its overrun and no more.
+ * See swap_wait().
  */
-#define GUEST_EXEC_PCT       85u
+#define GUEST_EXEC_PCT       90u
 /* Bounds on the display period the budget is a percentage OF. 16 ms is 60 Hz;
    the window is deliberately narrow because anything outside it means the
    measurement is wrong rather than the panel is unusual, and a budget derived
    from a wrong period is exactly the bug this replaced. */
 #define PANEL_MS_MIN_SANE    14u
 #define PANEL_MS_MAX_SANE    20u
+#define PANEL_MS_LATE_FLOOR  16u    /* see the panel_ms_min latch */
 
 /*
  * The guest's clock, and the fact that it is REAL time.
@@ -667,6 +673,7 @@ static uint32_t   rate_window_frames;
    60 fps, so every slower frame threw ticks away -- measured as ~351 of 473
    per second, with guest_ticks_dropped climbing ~100/s. 24 covers 473 Hz
    down to 20 fps and 560 Hz down to 24. */
+#define TICK_CARRY_MS           4u    /* collided ticks carried to the next frame */
 #define TICK_MIN_INSNS 2500u   /* see the phase plan: no closer ticks than this */
 #define TICK_IRQ_MAX          512u
 #define TICK_STALL_MS        1000u    /* longer than this is a stall, not lag */
@@ -3940,6 +3947,58 @@ static void core_repaint(void)
 
 volatile uint32_t x86_modey_presents;   /* host-visible: flips actually painted */
 
+#ifndef X86_SWAP_WAIT_LATE
+#define X86_SWAP_WAIT_LATE 1
+#endif
+/*
+ * THE WAIT FOR THE PANEL, AND WHERE IN THE LOOP IT IS TAKEN.
+ *
+ * lcd_swap() queues the flip for the next vblank and turns the firmware's
+ * "active" (draw) buffer over at once, so until that vblank the draw buffer is
+ * the one ON THE GLASS and must not be painted. The loop used to wait right
+ * after the swap, with nothing else to do: a frame whose guest slice ran a
+ * millisecond past the vblank then idled a whole display period for the next
+ * one. Another World, console 2026-11-21: 47 host fps, ~30% of the wall in
+ * this wait, while the guest was too slow to take its 4,992 Hz music timer
+ * (ticks dropped at up to 600/s, the music audibly slowing).
+ *
+ * X86_SWAP_WAIT_LATE takes the wait just before the frame is DRAWN instead, so
+ * the next guest slice runs while the flip is pending. The loop is still paced
+ * by the panel -- one vblank per iteration -- but a late frame costs only its
+ * own lateness.
+ *
+ * cpumon_sleep() closes the busy interval (which is what the overlay's busy%
+ * reads) and WFIs until the next interrupt. A WFI can rest until the next
+ * SysTick, so the bound is wall clock rather than a spin count: a swap that
+ * never completes must cost one frame, not 100000 sleeps.
+ *
+ * panel_ms_min CAN NO LONGER LEARN FROM THE ITERATION'S LENGTH. With the wait
+ * at the end every iteration ended ON a vblank; now a late frame is followed
+ * by a short iteration (its vblank comes early), and even two that both waited
+ * differ by whatever their paints differed. The learner took those for the
+ * panel: the period read 14 ms, the regulator's target fell with it, and
+ * Wolfenstein 3D lost 12% of its slice (console, 2026-11-21). So the period
+ * is measured here instead, between the ends of two waits running.
+ */
+static uint8_t swap_waited;
+static uint32_t swap_period_ms;         /* vblank to vblank, 0 = not known */
+static void swap_wait(const gw_firmware_abi_t *abi)
+{
+    static uint32_t end_ms;
+    uint32_t wait_start = abi->HAL_GetTick(), now = wait_start;
+    swap_waited = (uint8_t)(swap_waited << 1);
+    while (abi->lcd_is_swap_pending()) {
+        if ((uint32_t)(now - wait_start) > 100u)
+            break;   /* never trade a black screen for a hang */
+        swap_waited |= 1u;
+        abi->cpumon_sleep();
+        now = abi->HAL_GetTick();
+    }
+    /* Two waits running end on two vblanks: that is the period. */
+    swap_period_ms = (swap_waited & 3u) == 3u ? now - end_ms : 0u;
+    end_ms = now;
+}
+
 /*
  * Paint BOTH buffers. This is the whole of Mode Y's presentation and it is not
  * belt and braces.
@@ -5468,9 +5527,17 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                with slowed Rick 2's music and movement by a quarter. Beyond two
                it is a stall, not a collision -- counted as dropped, so a long
                CLI does not come back as a burst. */
-            if (tick_irqs_owed > 2u) {
-                guest_ticks_dropped += tick_irqs_owed - 2u;
-                tick_irqs_owed = 2u;
+            /* ...AND TWO IS A TIME TOO, at a fast clock: 4 ms of ticks where
+               that is more. Another World mixes its music in a 4,992 Hz
+               handler, 83 ticks a frame; the few a frame that found the last
+               one still in service were thrown away at up to 220 a second,
+               and the music ran that much slow (console, 2026-11-21). */
+            uint32_t carry = (TICK_CARRY_MS * 1193u) / div;
+            if (carry < 2u)
+                carry = 2u;
+            if (tick_irqs_owed > carry) {
+                guest_ticks_dropped += tick_irqs_owed - carry;
+                tick_irqs_owed = carry;
             }
             owed += tick_irqs_owed;
             tick_irqs_owed = owed > cap ? cap : owed;
@@ -5883,6 +5950,14 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
 
         /* Video. The beam fraction drives the CGA status register, so a guest
            polling for vertical retrace sees it arrive about once per frame. */
+#if X86_SWAP_WAIT_LATE
+        /* THE GUEST RAN WHILE THE LAST SWAP WAITED FOR ITS VBLANK; only now,
+           before anything is drawn, does the loop wait for it. See
+           swap_wait(). */
+        X86_ZONE_ENTER(X86_ZONE_SWAP);
+        swap_wait(abi);
+        X86_ZONE_EXIT();
+#endif
         FRAME_PHASE(X86_PHASE_VIDEO);
         X86_ZONE_ENTER(X86_ZONE_VIDEO);             /* ZONES */
         x86_video_set_beam(0xE000);
@@ -6037,20 +6112,9 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
         FRAME_PHASE(X86_PHASE_SWAP);
         X86_ZONE_ENTER(X86_ZONE_SWAP);
         abi->lcd_swap();
-        {
-            /* This wait is the loop's ONLY idle, so it is where the CPU
-               monitor is told so -- cpumon_sleep() closes the busy interval
-               (which is what the overlay's busy% reads) and WFIs until the
-               next interrupt. A WFI can rest until the next SysTick, so the
-               bound here is wall clock rather than a spin count: a swap that
-               never completes must cost one frame, not 100000 sleeps. */
-            uint32_t wait_start = abi->HAL_GetTick();
-            while (abi->lcd_is_swap_pending()) {
-                if ((uint32_t)(abi->HAL_GetTick() - wait_start) > 100u)
-                    break;   /* never trade a black screen for a hang */
-                abi->cpumon_sleep();
-            }
-        }
+#if !X86_SWAP_WAIT_LATE
+        swap_wait(abi);
+#endif
         X86_ZONE_EXIT();                            /* ZONES: end SWAP */
         frames_rendered++;
         /* Only if the guest actually ran. This is the slice BUDGET, not a
@@ -6117,9 +6181,18 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
          * floor is safe because no panel this firmware drives runs faster than
          * PANEL_MS_MIN_SANE.
          */
-        if (!panel_ms_min || frame_ms_last < panel_ms_min)
-            panel_ms_min = frame_ms_last < PANEL_MS_MIN_SANE
-                         ? PANEL_MS_MIN_SANE : frame_ms_last;
+        uint32_t period_ms = X86_SWAP_WAIT_LATE ? swap_period_ms : frame_ms_last;
+        /* A wake one millisecond late makes one reading long and the next
+           short -- 14 and 15 ms were read off the 16.7 ms panel -- and this
+           is a MINIMUM, so the short ones are what it would keep. */
+        if (X86_SWAP_WAIT_LATE && period_ms && period_ms < PANEL_MS_LATE_FLOOR)
+            period_ms = PANEL_MS_LATE_FLOOR;
+        if (X86_SWAP_WAIT_LATE
+            && (!period_ms || period_ms > PANEL_MS_MAX_SANE))
+            ;   /* no vblank-to-vblank measurement this time: swap_wait() */
+        else if (!panel_ms_min || period_ms < panel_ms_min)
+            panel_ms_min = period_ms < PANEL_MS_MIN_SANE
+                         ? PANEL_MS_MIN_SANE : period_ms;
         else if ((frames_rendered & 511u) == 0u)
             panel_ms_min++;
 
