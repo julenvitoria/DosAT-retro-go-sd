@@ -433,6 +433,7 @@ X86_UC_TEXT(x86_dos_ss_sync) void x86_dos_ss_sync(void)
     for (unsigned i = 0; i < DOS_MAX_FILES; i++)
         if (dos_file_used[i])
             (void)f_sync(&dos_files[i]);
+    x86_vga_ega_ss_save();          /* the virtual card's table rides in the image */
 }
 
 static FIL *handle_get(uint16_t h)

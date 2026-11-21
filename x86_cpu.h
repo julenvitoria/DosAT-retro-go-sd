@@ -765,6 +765,8 @@ void x86_speaker_render(int16_t *dst, unsigned frames, unsigned sample_rate,
    old point-sampled behaviour, so tier-1 expectations are unchanged. */
 extern uint32_t (*x86_io_time_ms)(void);
 extern void *(*x86_io_alloc)(uint32_t bytes);  /* host buffers (SB direct DAC) */
+void x86_vga_ega_ss_save(void);
+void x86_vga_ega_ss_loaded(void);
 extern volatile uint32_t x86_spk_events;          /* frequency changes logged */
 extern volatile uint32_t x86_spk_events_dropped;  /* ring overflows           */
 extern volatile uint32_t x86_spk_log[8];          /* (port<<24)|value, last 8 */

@@ -513,6 +513,23 @@ window stale (`x86_vga_ega_stale`, bit g) and points their fold entries at
 - one more rebuilds that granule's sixteen pages (`x86_vga_ega_fresh()`) and
   restores its entry, so a reader that keeps going stops trapping.
 
+**The virtual card's table is no longer in the window (2026-11-21).** It sat in
+the top 1.5 KB of the aperture (0xFA00..0xFFFF), so the shadow stopped there and
+a guest READ up there returned the table's own bytes. Keen 4's display page
+wraps through that range whenever it starts above 0xC800, and the masked sprite
+draw (`and al,es:[di]`) then read garbage for those rows: a black box with white
+fragments round the sprite, 6 to 9 captures of 24 while bouncing on the pogo, on
+every core back to the oldest one kept. The table now comes from the AHB heap
+(`x86_io_alloc`) and the shadow covers all 64 K; 24 of 24 captures are clean.
+Without an allocator (tier 1) it stays in the aperture and the shadow stops at
+0xFA00 as before. A savestate carries the table at the top of the aperture
+(`x86_vga_ega_ss_save` / `_ss_loaded`), and the pointer to this session's block
+lives in ITCM, which no image restores. Three hypotheses were disproved on the
+way and are worth not repeating: the lazy shadow's 8-byte patches (a core
+without them fails as often), the game drawing on the visible page (a counter
+says never), and a stale shadow (a per-frame checker found 0 bad bytes in 39 M).
+Eight captures per build was NOISE; twenty-four was a measurement.
+
 Three things that are not optional, each found the hard way or by reading:
 
 1. **Every access is patched, whatever its site declares.** `MEM_GET_PTR` is
