@@ -22,7 +22,8 @@ Measured on HARDWARE, Wolf3D in Mode Y, as % of wall. Full table and method:
   largest single block, and the one nobody has attacked.
 - **25.0%** the planar store hook. An aperture byte store is **171 cyc**
   against **55** for the same store to ordinary memory.
-- **27.0%** idle waiting for the panel — vsync-quantised, not freely convertible.
+- **27.0%** idle waiting for the panel — mostly reclaimed 2026-11-21 by waiting
+  for the vblank before the DRAW, not after the swap (`docs/09` §3a); re-measure.
 - **0.84%** the blit. **0.05%** residual.
 
 **Already measured and REJECTED — do not re-propose:** DMA2D for the blit
