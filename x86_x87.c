@@ -225,6 +225,27 @@ static int64_t load_i64(const void *p)
     return v;
 }
 
+/* 64-BIT INTEGER <-> DOUBLE WITHOUT libgcc. A cast pulls in __aeabi_l2d and
+   __aeabi_d2lz, and those bring the whole soft-float add/subtract with them:
+   ~970 B of RAM_EMU (measured, 2026-11-21) for FILD m64 and FISTP m64. The FPU
+   converts 32 bits at a time, and both halves are exact: hi * 2^32 has no
+   rounding, and the one add rounds the true sum once, as the cast would. */
+#define X87_2P32 4294967296.0
+static double i64_to_double(int64_t v)
+{
+    return (double)(int32_t)(v >> 32) * X87_2P32 + (double)(uint32_t)v;
+}
+
+/* r is already an integer in [-2^63, 2^63): store_int() checked. */
+static int64_t double_to_i64(double r)
+{
+    double a = r < 0.0 ? -r : r;
+    uint32_t hi = (uint32_t)(a * (1.0 / X87_2P32));    /* exact, truncates */
+    uint32_t lo = (uint32_t)(a - (double)hi * X87_2P32);
+    uint64_t u = ((uint64_t)hi << 32) | lo;
+    return (int64_t)(r < 0.0 ? 0u - u : u);
+}
+
 /* Round to integer under the control word's RC field (bits 11:10):
    0 nearest-even, 1 down, 2 up, 3 truncate toward zero. FIST/FISTP and
    FRNDINT all obey it; getting this wrong is a silent off-by-one in every
@@ -286,7 +307,7 @@ static void store_int(void *p, unsigned bytes, double v)
             uint64_t x = 0x8000000000000000ull; x87_sw |= SW_IE | SW_ES;
             memcpy(p, &x, 8); return;
         }
-        int64_t x = (int64_t)r; memcpy(p, &x, 8);
+        int64_t x = double_to_i64(r); memcpy(p, &x, 8);
     }
 }
 
@@ -426,7 +447,7 @@ int x86_x87_exec(X86CPUState *cpu, uint32_t op, uint32_t modrm, void *mem)
             case 0: x87_push((double)load_i16(mem)); return 0;  /* FILD m16  */
             case 2: store_int(mem, 2, *st_ref(0)); return 0;    /* FIST m16  */
             case 3: store_int(mem, 2, *st_ref(0)); x87_pop(); return 0;
-            case 5: x87_push((double)load_i64(mem)); return 0;  /* FILD m64  */
+            case 5: x87_push(i64_to_double(load_i64(mem))); return 0;  /* FILD m64  */
             case 7: store_int(mem, 8, *st_ref(0)); x87_pop(); return 0;
             default: break;                        /* /4 FBLD, /6 FBSTP     */
             }
@@ -563,3 +584,4 @@ int x86_x87_exec(X86CPUState *cpu, uint32_t op, uint32_t modrm, void *mem)
     x86_x87_escapes++;
     return 1;
 }
+

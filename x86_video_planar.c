@@ -1304,7 +1304,12 @@ static uint32_t ega_shadow_sig;
    of one 4 KB granule when the lazy path below asks (x86_vga_ega_fresh). */
 static uint32_t ega_rb_lo, ega_rb_hi = EGA_SHADOW_PAGES;
 
-PLANAR_HOT static void ega_shadow_rebuild(void)
+/* NOT in ITCM any more (2026-11-21). It was, when every Read Map Select change
+   rebuilt all 64 K; since the lazy shadow it runs for one 4 KB granule after
+   EGA_STALE_PATCH patched reads, and its 272 B are worth more to the store
+   path. Another World intro on the console, in and out of ITCM: 2.436 M and
+   2.453 M insns/s, i.e. no difference (tests/budgets.json, 2026-11-21). */
+static void ega_shadow_rebuild(void)
 {
     uint8_t *sh = x86_vga_planar_aperture;
     uint32_t a;

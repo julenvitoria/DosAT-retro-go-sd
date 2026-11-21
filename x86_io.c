@@ -86,7 +86,15 @@ static uint8_t  pit_irq_armed;      /* forced to 1 with an IRQ waiting      */
  * arming an IRQ drops it to 1 -- must go through x86_pit_counter_forced(),
  * or that drop is counted as a whole slice of guest time that never ran.
  */
-void x86_pit_sync(void)
+/* ALIGNED TO A CACHE LINE, AND MEASURED. Freeing 888 B ahead of this in
+   RAM_EMU (x86_x87.c, 2026-11-21) moved every function after it by 24 mod 32
+   and Another World's intro lost 2.4% (2.50 -> 2.45 M insns/s, console, runs
+   repeat within 0.3%); pinning this one -- which also puts x86_port_read and
+   x86_port_write back on their old phase -- returned it (2.49 M). The code in
+   RAM_EMU runs from AXI SRAM through the I-cache, so WHERE a hot function
+   starts is part of its cost. If a later change costs a couple of percent
+   for no visible reason, look here first. */
+__attribute__((aligned(32))) void x86_pit_sync(void)
 {
     uint32_t cur    = cpu_state_ptr->pit_counter;
     uint32_t reload = cpu_state_ptr->pit_reload;
