@@ -336,6 +336,12 @@ void x86_pager_set_donate_pinned(int on);
 
 #define X86_PG_RESERVE_FLOOR   64u   /* frames the guest keeps come what may */
 #define X86_PG_RESERVE_MARGIN   8u   /* runway: the shrink fires on this      */
+/* Evictions in one sampler window above which the working set is said NOT to
+   fit, whatever the sampler counted; two such windows running are what a
+   SHRINK takes (x86_pager_policy_tick). */
+#ifndef X86_PG_THRASH_EV
+#define X86_PG_THRASH_EV 32u
+#endif
 #define X86_PG_POLICY_QUIET    60u   /* frames of calm before lending again   */
 
 #define X86_PG_POLICY_HOLD    0

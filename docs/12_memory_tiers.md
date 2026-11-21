@@ -623,9 +623,24 @@ the window falls) and present in `e1c677c` too: four runs of nine.
 reserve_eff`. After: shrink signals 1-2, evictions ~122 -> ~83, the level whole
 in two runs of three and one small box in the third.
 
-**Still open.** A real shrink drops what it cannot evacuate, and in the level
-the card sits at 57,344 of 65,536 offsets with `reserve_eff` 130 (the ratchet
-from the load peak) while `ws_est` is 59 -- the guest could spare the nine
-frames a full card needs, but the policy allows one second piece per session
-and a re-fit wipes it. Growing and shrinking the second piece IN PLACE is the
-fix; it is a design change and is not built.
+**Then the shrink itself went (2026-11-21).** One small box was still left in
+one run of three: a REAL shrink at the level load, dropping what it could not
+evacuate. Growing the piece back in place was built and worked (the patch is
+kept as `build/run/patches/keen4-grow-in-place-NOT-NEEDED.patch`), and then
+turned out to be unnecessary: with `X86_PG_POLICY_NO_SHRINK=1` the level came
+up whole every time, for ~15 more evictions and 0.2 s of card time over the
+whole load -- an eviction is cheap now (§9a, §9b). So the rule is:
+
+> **SHRINK only for thrash that lasts** -- more than `X86_PG_THRASH_EV` (32)
+> evictions in TWO sampler windows running. The working-set watermark alone
+> holds the loan.
+
+The watermark was there to hand frames back BEFORE the first pagefile write,
+when one cost up to 433 ms. It costs ~12 ms now and often nothing, and what the
+shrink destroys is a picture the game will not redraw. Console, KEEN4 into
+Border Village, three runs: level whole in all three, card 65,536 offsets
+throughout, 0 shrink signals; six captures walking left with no black block.
+`tests/test_paging.py`'s policy arm now asserts exactly this (the loan holds
+while the set grows; SHRINK on the second thrash window and not the first).
+`x86_pager_reset()` also clears the sampler's history, which used to hand the
+next title the last title's working set as its reserve.
