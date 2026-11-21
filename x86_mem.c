@@ -387,3 +387,45 @@ void x86_unmap_all(void)
     for (uint32_t i = 0; i < FOLD_ENTRIES; i++)
         guest_page_table_ptr[i] = FOLD_INVALID;
 }
+
+/*
+ * 64-BIT DIVISION, OURS (2026-11-21). libgcc's __udivmoddi4 is 800 B of RAM_EMU
+ * -- a fifth of a guest frame -- and everything that divides 64 bits here
+ * (the PIT's time conversions, the audio mixers' rate steps, the guest's own
+ * DIV with a 64-bit dividend) reaches it through __aeabi_uldivmod and
+ * __aeabi_ldivmod, which only ever call this one function. Defining it keeps
+ * the archive's out. A 32/32 case goes to the CPU's own divider; the rest is
+ * shift and subtract over the bits the quotient can actually have. Checked on
+ * the host against the native operators: 30 M random pairs and the edges
+ * (build/run/divtest). A zero divisor returns 0 and the dividend, which is
+ * what the wrappers' own check makes unreachable.
+ */
+unsigned long long __udivmoddi4(unsigned long long n, unsigned long long d,
+                                unsigned long long *rp);
+unsigned long long __udivmoddi4(unsigned long long n, unsigned long long d,
+                                unsigned long long *rp)
+{
+    unsigned long long q = 0;
+    const unsigned nh = (unsigned)(n >> 32), dh = (unsigned)(d >> 32);
+
+    if (!nh && !dh && (unsigned)d) {             /* 32 / 32: the CPU divides */
+        const unsigned a = (unsigned)n, b = (unsigned)d;
+        q = a / b;
+        n = a - (unsigned)q * b;
+    } else if (d && n >= d) {
+        int sh = (dh ? __builtin_clz(dh) : 32 + __builtin_clz((unsigned)d))
+               - (nh ? __builtin_clz(nh) : 32 + __builtin_clz((unsigned)n));
+        d <<= sh;
+        do {
+            q <<= 1;
+            if (n >= d) {
+                n -= d;
+                q |= 1u;
+            }
+            d >>= 1;
+        } while (sh--);
+    }
+    if (rp)
+        *rp = n;
+    return q;
+}
