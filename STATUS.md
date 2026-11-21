@@ -54,7 +54,7 @@ It forces a real re-link, refuses a stale ELF, and exits non-zero when ITCM, `__
 | | value — `tests/budgets.json`, recorded 2026-11-21, stock flags, forced re-link |
 |---|---|
 | ITCM | `__CORE_ITCM_CODE_END__` = **0xFFE8** — **24 B free** of 65,536 (2026-11-21). FULL: new hot code needs something moved out first |
-| RAM_EMU | `__CORE_BSS_END__` = **0x24061E38** (2026-11-21) — 456 B below the `0x24062000` step, guest pool **157 frames**. It MOVES every merge — measure it, never quote it. Frame stride is **4,104**, not 4,096 (granule-seam slack); a full 160-frame pool wants **656,640 B** |
+| RAM_EMU | `__CORE_BSS_END__` = **0x24061F68** (2026-11-21) — 152 B below the `0x24062000` step, guest pool **157 frames**. It MOVES every merge — measure it, never quote it. Frame stride is **4,104**, not 4,096 (granule-seam slack); a full 160-frame pool wants **656,640 B** |
 | DTCM | **A CLIFF, not headroom: 712 B left** (`core_dtcm_next` = `0x20019D38` on the console, 2026-11-21; the pool ends at `0x2001A000`). The 64 KB VGA aperture is the last tenant; if it does not fit it falls to the arena and the **0Dh card is REFUSED** -- Another World stayed in text mode when the pager's tables grew 1 KB. Read `core_dtcm_next` and `x86_vga_ega_refused` after any DTCM change; the gate does not ([`docs/12`](docs/12_memory_tiers.md) §8) |
 | arena | 143,360 B — check `x86_arena_largest`, not `_free`; claims fragment |
 

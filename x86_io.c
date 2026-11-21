@@ -2189,20 +2189,102 @@ static void sb_dac_put(uint8_t v)
         sb_dac_buf[x86_sb_dac_writes++ & (SB_DAC_FIFO - 1u)] = v;
 }
 
+/*
+ * THE RENDER IS A RESAMPLER WITH A STEADY RATE (2026-11-21).
+ *
+ * It used to spread whatever had arrived since the last call evenly over that
+ * call's output. But the guest runs in bursts -- its slice, then the wait for
+ * the panel -- and the audio is pumped on the DMA's clock, so one window got
+ * forty samples and the next a hundred and thirty: every window was played at
+ * its own speed. On the console Another World's music came out with the pitch
+ * of each note wandering (661-684 Hz for one sustained note on a recording),
+ * which is what "the music does not sound right" was.
+ *
+ * Now the samples wait in the FIFO and are read out at a rate that only moves
+ * slowly: the average arrivals per output sample -- an exponential mean, 1/8
+ * per window for the first 64 windows so it settles within a second, 1/256
+ * after -- nudged in PROPORTION to how far the queue is from two windows'
+ * worth, by 3% at most. (Switching the rate in steps was tried first and is
+ * its own wobble: +-15 Hz on a 430 Hz note in the model, against +-6 this
+ * way and +-149 for the old code.) Output is interpolated between neighbours,
+ * not held. Nothing plays until two windows have arrived; an empty FIFO holds
+ * the last sample instead of snapping back to centre; eight windows with no
+ * arrivals end the stream.
+ */
+static uint32_t sb_dac_seen;            /* x86_sb_dac_writes at the last render */
+static uint32_t sb_dac_avg;             /* arrivals per output sample, 16.16; 0 = stopped */
+static uint32_t sb_dac_pos;             /* fraction into the current sample, 0.16 */
+static uint32_t sb_dac_idle;
+static uint32_t sb_dac_wins;            /* windows since the stream started */
+
 static void sb_dac_render(int16_t *dst, unsigned frames, int16_t amplitude)
 {
-    uint32_t n = x86_sb_dac_writes - sb_dac_read;
-    if (!n)
+    uint32_t wr = x86_sb_dac_writes;
+    uint32_t arr = wr - sb_dac_seen, fill = wr - sb_dac_read;
+    uint32_t inst, target, step;
+
+    sb_dac_seen = wr;
+    if (!sb_dac_buf || !frames)
         return;
-    if (n > SB_DAC_FIFO)                /* overrun: keep the newest FIFO's worth */
-        sb_dac_read = x86_sb_dac_writes - (n = SB_DAC_FIFO);
-    uint32_t step = (n << 16) / frames, pos = 0;
-    for (unsigned i = 0; i < frames; i++, pos += step) {
-        int32_t o = dst[i] + ((((int32_t)sb_dac_buf[(sb_dac_read + (pos >> 16))
-                                & (SB_DAC_FIFO - 1u)] - 128) * amplitude) >> 7);
-        dst[i] = (int16_t)(o > 32767 ? 32767 : (o < -32768 ? -32768 : o));
+    if (arr) {
+        sb_dac_idle = 0;
+    } else if (++sb_dac_idle > 8u) {
+        sb_dac_avg = 0;                 /* the stream is over */
+        sb_dac_read = wr;
+        return;
     }
-    sb_dac_read += n;
+    if (fill > SB_DAC_FIFO) {           /* overrun: keep the newest half */
+        fill = SB_DAC_FIFO / 2u;
+        sb_dac_read = wr - fill;
+    }
+    inst = (arr << 16) / frames;
+    if (!sb_dac_avg) {
+        if (fill < 2u * arr || !arr)
+            return;                     /* queue two windows before the first */
+        sb_dac_avg = inst;
+        sb_dac_pos = 0;
+        sb_dac_wins = 0;
+    } else {
+        sb_dac_avg += (uint32_t)(((int32_t)inst - (int32_t)sb_dac_avg)
+                                 >> (sb_dac_wins < 64u ? 3 : 8));
+        if (!sb_dac_avg)
+            sb_dac_avg = 1u;
+        sb_dac_wins++;
+    }
+    /* Two windows' worth queued is the aim; lean on the rate to get there. */
+    target = (uint32_t)(((uint64_t)sb_dac_avg * frames) >> 15);
+    if (!target)
+        target = 1u;
+    {
+        int32_t err = (int32_t)fill - (int32_t)target;
+        if (err > (int32_t)target)
+            err = (int32_t)target;
+        if (err < -(int32_t)target)
+            err = -(int32_t)target;
+        step = (uint32_t)((int32_t)sb_dac_avg
+                          + ((int32_t)(sb_dac_avg >> 5) * err) / (int32_t)target);
+    }
+
+    for (unsigned i = 0; i < frames; i++) {
+        uint32_t adv;
+        int32_t s0, s1, v, o;
+        if (!fill)
+            break;                      /* nothing queued at all */
+        s0 = sb_dac_buf[sb_dac_read & (SB_DAC_FIFO - 1u)];
+        s1 = fill > 1u ? sb_dac_buf[(sb_dac_read + 1u) & (SB_DAC_FIFO - 1u)] : s0;
+        v = (s0 << 8) + (((s1 - s0) * (int32_t)(sb_dac_pos >> 8)));
+        o = dst[i] + (((v - 32768) * amplitude) >> 15);
+        dst[i] = (int16_t)(o > 32767 ? 32767 : (o < -32768 ? -32768 : o));
+        sb_dac_pos += step;
+        adv = sb_dac_pos >> 16;
+        sb_dac_pos &= 0xFFFFu;
+        if (adv >= fill) {              /* ran dry: hold the newest sample */
+            adv = fill - 1u;
+            sb_dac_pos = 0;
+        }
+        sb_dac_read += adv;
+        fill -= adv;
+    }
 }
 
 /*
