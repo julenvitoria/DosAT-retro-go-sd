@@ -299,10 +299,12 @@ def main(args):
             ("  ... for NOTHING: no eviction",       p[80], 0),
             ("  ... guest RAM shrank",               p[81], 1),
 
-            # The half that did not exist: the working set grows into what was
-            # lent, and the watermark fires while the pool still has runway.
-            ("the working set grows: SHRINK",        p[82], 1),
-            ("  ... BEFORE the first eviction",      p[83], 0),
+            # The working set grows into what was lent: the loan HOLDS (a
+            # shrink wipes the card's second piece; a level load is not
+            # worth one). Two sampler windows of thrash: SHRINK, on the
+            # second and not the first.
+            ("the working set grows: the loan holds", p[82], 1),
+            ("thrash for two windows: SHRINK then",   p[83], 1),
             ("  ... counted",                        p[84], 1),
             ("released, then reclaimed",             p[85], 1),
             ("  ... the pool is whole again",        p[86], 8),

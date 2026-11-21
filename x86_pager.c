@@ -130,9 +130,6 @@ int x86_pager_set_tables(void *block, uint32_t bytes)
    whatever the sampler counted: the guest is paying SD writes for pages it is
    still using. Cold pages going out once is the point of the policy; this is
    the line between that and thrash. */
-#ifndef X86_PG_THRASH_EV
-#define X86_PG_THRASH_EV 32u
-#endif
 #if X86_PG_WSS
 #define PG_ACCESSED 0x08u
 volatile uint32_t x86_pg_wss_last = 0;      /* pages touched in the last window */
@@ -142,7 +139,7 @@ volatile uint32_t x86_pg_wss_samples = 0;
 volatile uint32_t x86_pg_wss_resident = 0;  /* resident at that sample          */
 volatile uint32_t x86_pg_ws_est = 0;        /* what the policy reserves for     */
 volatile uint32_t x86_pg_ws_ev_window = 0;  /* evictions in the last window     */
-static uint32_t ws_prev, ws_ev_mark;
+static uint32_t ws_prev, ws_ev_mark, ws_ev_prev;
 #endif
 
 /* ---- frames --------------------------------------------------------------
@@ -208,6 +205,13 @@ void x86_pager_reset(void)
     }
     memset(extents, 0, sizeof(extents));
     extent_count = frame_count = free_count = 0;
+#if X86_PG_WSS
+    /* The sampler's history belongs to the guest that made it: left standing,
+       the next title's reserve was the LAST title's working set until two of
+       its own windows had been seen. */
+    ws_prev = ws_ev_mark = ws_ev_prev = 0;
+    x86_pg_wss_samples = x86_pg_ws_est = x86_pg_ws_ev_window = 0;
+#endif
     own_first = own_count = 0;
     memset(aux_win, 0, sizeof(aux_win));
     victim_hand = 0;
@@ -409,6 +413,7 @@ void x86_pager_wss_sample(void)
        halfway through a burst, two cannot both miss it. */
     x86_pg_ws_est = (n > ws_prev) ? n : ws_prev;
     ws_prev = n;
+    ws_ev_prev = x86_pg_ws_ev_window;
     x86_pg_ws_ev_window = x86_pg_evictions - ws_ev_mark;
     ws_ev_mark = x86_pg_evictions;
     x86_pg_wss_last = n;
@@ -1231,6 +1236,23 @@ int x86_pager_policy_tick(void)
            second piece in between. */
         if (frame_count - donated_frames >= x86_pg_reserve_eff)
             return X86_PG_POLICY_HOLD;
+#if X86_PG_WSS
+        /* AND ONLY FOR THRASH THAT LASTS (2026-11-21). A shrink costs the
+           card's second piece its contents -- what cannot be evacuated reads
+           back as zero and is BLACK on the panel until the game redraws it,
+           which a title that only repaints what changed never does. KEEN4
+           takes one at every level load (the working set peaks at ~120 of
+           157 frames for a few seconds) and came up with black bands across
+           the level. Leaving the loan alone there costs ~15 more evictions
+           and 0.2 s of card time over the whole load, now that an eviction is
+           often unwritten. So the working-set watermark alone no longer
+           shrinks: it takes more than X86_PG_THRASH_EV evictions in TWO
+           windows running -- ten seconds of a guest paying for pages it is
+           using -- which is the case a shrink is the way out of. */
+        if (!(x86_pg_ws_ev_window > X86_PG_THRASH_EV
+              && ws_ev_prev > X86_PG_THRASH_EV))
+            return X86_PG_POLICY_HOLD;
+#endif
         x86_pg_shrink_signals++;
         return X86_PG_POLICY_SHRINK;
     }

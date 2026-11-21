@@ -5167,22 +5167,40 @@ static void pager_policy_arms(void)
     pager_r[80] = x86_pg_evictions - pol_ev0;  /* idle frames cost NOTHING */
     pager_r[81] = (x86_pg_frames_total < 8u);                   /* 1 */
 
-    /* ---- 2. HAND THEM BACK BEFORE THE GUEST THRASHES ------------------ */
-    /* Grow the working set into what was lent. The watermark must fire while
-       the pool still has runway -- the eviction counter at that moment is the
-       whole point of the arm, because an eviction is a 4 KB pagefile write and
-       on silicon that is up to 433 ms INSIDE the frame loop. */
+    /* ---- 2. HAND THEM BACK ONLY FOR THRASH THAT LASTS ------------------ */
+    /* The rule changed on 2026-11-21 (x86_pager_policy_tick). A SHRINK costs
+       the card's second piece its contents, so the working set growing into
+       the loan -- which is all a level load is -- must NOT take one; it takes
+       more than X86_PG_THRASH_EV evictions in two sampler windows running.
+       (a) the set grows over the whole window, evictions begin, the loan
+           holds;
+       (b) two windows of that, and the SHRINK comes on the second -- a
+           policy that gave it on the first would have wiped Keen 4's level. */
     {
-        int shrank = 0;
-        for (uint32_t p = 2u; p < PGT_PAGES && !shrank; p++) {
+        int early = 0, shrank = 0;
+        for (uint32_t p = 2u; p < PGT_PAGES; p++) {
             pol_touch(p + 1u);
             if (x86_pager_policy_tick() == X86_PG_POLICY_SHRINK)
-                shrank = 1;
+                early = 1;
         }
-        pager_r[82] = shrank;                                   /* 1 */
+        pager_r[82] = (!early && x86_pg_donated == donated_first);  /* 1 */
+        for (uint32_t w = 0; w < 2u && !early && !shrank; w++) {
+            uint32_t ev0 = x86_pg_evictions;
+            for (uint32_t i = 0; i < 400u
+                     && x86_pg_evictions - ev0 <= X86_PG_THRASH_EV; i++)
+                pol_touch(PGT_PAGES);
+            x86_pager_wss_sample();
+            if (x86_pager_policy_tick() == X86_PG_POLICY_SHRINK) {
+                if (w == 0u)
+                    early = 1;
+                else
+                    shrank = 1;
+            }
+        }
+        pager_r[83] = (shrank && !early);                           /* 1 */
     }
     ev_at_shrink = x86_pg_evictions - pol_ev0;
-    pager_r[83] = ev_at_shrink;         /* 0: BEFORE the first writeback */
+    (void)ev_at_shrink;
     pager_r[84] = x86_pg_shrink_signals;                        /* 1 */
     /* What the video path does with a SHRINK: release, then reclaim. */
     x86_arena_release(X86_ARENA_ID_EGA);

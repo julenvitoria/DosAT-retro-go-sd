@@ -132,7 +132,7 @@ means the owner played it himself.
 | title | reached | state |
 |---|---|---|
 | WOLF3D | gameplay, shooting | ~18 fps; fewer SD stalls (docs/12 §9a); owner: better |
-| Commander Keen 4 | Border Village, walking left | plays; black blocks still appear while scrolling -- the card is short, docs/12 §9c "still open" |
+| Commander Keen 4 | Border Village, walking left | plays; the level comes up whole and scrolls with no black blocks since the policy stopped shrinking the card at every load (docs/12 §9c) |
 | Another World | intro, start of the game | **now plays** (docs/08 §6b). Owner: intro still slow and its sound odd -- NOT investigated; lead: ~100 K planar store calls a second, 90% `PL_COPY` in 0Dh, all on the general store body |
 | Epic Pinball | Excalibur, three balls, scoring | fine, no lost stores |
 | Pinball Dreams 2 | table | **not host-bound**: 59 fps and no instruction deficit when barely probed; the judder is the game's own pacing at `cycles = 1800`, and more cycles feed ADLIB.SDR (2100: 15.1 K IRQ 0/s against 11.0 K) |
