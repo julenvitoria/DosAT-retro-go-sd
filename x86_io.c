@@ -3592,4 +3592,5 @@ X86_UC_TEXT(x86_io_ss_loaded) void x86_io_ss_loaded(void)
     if (!sb_ring && x86_io_alloc)
         sb_ring = (int16_t *)x86_io_alloc(SB_RING * sizeof(int16_t));
     sb_ring_r = sb_ring_w;
+    x86_vga_ega_ss_loaded();        /* the virtual card's table: x86_video_planar.c */
 }
