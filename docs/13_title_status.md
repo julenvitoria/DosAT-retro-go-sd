@@ -123,6 +123,27 @@ Health on all three: `core_ready=1`, `x86_pg_frames_total=155`,
 own cost, identical with and without this change), `x86_pg_exhausted=0`,
 `x86_dos_load_shorts=0`.
 
+## Console pass — 2026-11-20/21, played on the device, core `028d8b5`
+
+Each title was launched and played on the console with
+`scripts/console_play.py` and judged from captures of the real panel; "owner"
+means the owner played it himself.
+
+| title | reached | state |
+|---|---|---|
+| WOLF3D | gameplay, shooting | ~18 fps; fewer SD stalls (docs/12 §9a); owner: better |
+| Commander Keen 4 | Border Village, walking left | plays; black blocks still appear while scrolling -- the card is short, docs/12 §9c "still open" |
+| Another World | intro, start of the game | **now plays** (docs/08 §6b). Owner: intro still slow and its sound odd -- NOT investigated; lead: ~100 K planar store calls a second, 90% `PL_COPY` in 0Dh, all on the general store body |
+| Epic Pinball | Excalibur, three balls, scoring | fine, no lost stores |
+| Pinball Dreams 2 | table | **not host-bound**: 59 fps and no instruction deficit when barely probed; the judder is the game's own pacing at `cycles = 1800`, and more cycles feed ADLIB.SDR (2100: 15.1 K IRQ 0/s against 11.0 K) |
+| Prince of Persia | first level, moving | fine |
+| Monkey Island (VGA), Dune 2 | intro / menu | fine |
+| Monkey Island (EGA), Loom, Rick Dangerous | owner | fine |
+| Ironman | "Are you using a joystick (Y/N)" | plays (owner); the launch sequence needs N, then 3 for AdLib |
+| Doom | its demo, in < 4 min | ~0.2 fps, ~80 faults a second: RAM-bound (docs/12 §9b) |
+| Dark Forces | past "Mouse driver not installed, press any key", into the intro | intro picture striped (its .cfg has no `vga_pages`); loads 67% faster than before |
+| Pinball Fantasies | intro | drawn wrong, identically on `e1c677c`: pre-existing, cause unknown (owner suspects memory) |
+
 ## The non-regression baseline
 
 Three titles, three renderers. These pictures and pixel counts are the

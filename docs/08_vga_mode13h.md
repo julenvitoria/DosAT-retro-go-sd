@@ -472,3 +472,68 @@ is `tests/test_video.py`, which compares all 64,000 pixels for chained 13h, for
 Mode Y and for 0Dh against expectations computed host-side from the pattern, and
 `scripts/run_planar_controls.py`, which requires four negative controls to fail
 and the stride learning to work from a deliberately wrong default.
+
+## 6. 2026-11-19..21: `REP STOS` in one call, and a read shadow that is rebuilt where it is read
+
+### 6a. `REP STOS` into the aperture (`d45b9b6`)
+
+A STOS site's store hook is `x86_vga_planar_stos()`, which gets the flag word
+as a fourth argument. It stores the trapping element exactly as
+`x86_vga_planar_store()` does and then, under a `REP` with DF clear, stores the
+elements `.str_exit` would have re-entered the handler for one at a time --
+each through the same `x86_vga_planar_store()`, so mode and write class do not
+matter -- and moves CX, DI, `rep_batch` and `pit_counter` by what those
+elements would have. Its bounds are `.str_exit`'s own (the batch cap, a slice
+budget that keeps one tick) plus a run that stays inside the 64 KB window and
+DI's low word and a count with nothing above bit 15, so both address sizes
+agree. WOLF3D clears ceiling and floor this way: 6.1% of its guest cycles,
+5,195 a run. Console, 3+3: 17.0 -> 17.6 fps mean, with a run-to-run spread as
+large as the gain.
+
+### 6b. The 0Dh read shadow, lazily (`028d8b5`)
+
+**What it was.** A change of read state -- Read Map Select, read mode, colour
+compare -- rebuilt the whole 64,000-offset shadow on the spot
+(`ega_shadow_rebuild()`). Section 4 sized that at 1,242 cycles an `OUT` for
+WOLF3D and left it. Another World reads its 0Dh pages back plane by plane,
+hundreds to two thousand switches a second: on the console those scenes ran
+100 K instructions a second with 70% of the machine inside the guest, the
+slice regulator cut `max_slice` to its floor against the cost, and the title's
+4,992 Hz IRQ 0 (divisor 239) got 650 ticks. From outside: frozen where the
+game starts. A tick-spacing floor was tried first and made it WORSE (7 fps) --
+the cost was never the tick plan.
+
+**What it is.** `ega_shadow_changed()` marks the sixteen 4 KB granules of the
+window stale (`x86_vga_ega_stale`, bit g) and points their fold entries at
+`FOLD_INVALID`. An access to a stale granule then reaches
+`x86_vga_slow_access()` by the path the flat card already uses:
+
+- its first `EGA_STALE_PATCH` (24) accesses get the eight bytes they can
+  reach made true IN PLACE, and the granule and its entry stay stale;
+- one more rebuilds that granule's sixteen pages (`x86_vga_ega_fresh()`) and
+  restores its entry, so a reader that keeps going stops trapping.
+
+Three things that are not optional, each found the hard way or by reading:
+
+1. **Every access is patched, whatever its site declares.** `MEM_GET_PTR` is
+   the WRITE trap, and XCHG, the ALU-to-memory forms and the string ops'
+   destinations read through it. A draft that skipped store-declared accesses
+   passed tier 1 and drew Keen 4's masked tiles black on the console.
+2. **Read-modify-write stubs call `x86_nor_slow_rmw`** (same size as the call
+   it replaces), so the latch record the inline stub makes is kept. A pure
+   store must NOT record it -- that would break the `mov al,[si] / mov [di],al`
+   copy.
+3. **`x86_seam.c` freshens both granules of a straddle**, because the fold
+   trap only sees the low one.
+
+Without the fold trap a read never reaches C, so there the rebuild stays
+eager. The mode set and the card re-seat rebuild everything and clear the mask.
+
+**Measured, console, Another World untouched from launch, twice:** the scene
+at ~40 s 0.10 M -> 1.8 M instructions/s; the start of the game 0.03 M -> 1.85 M
+instructions/s, ticks 650 -> 4,992 of 4,992, host 25 -> 42 fps, and the game
+runs on. Keen 4, Monkey Island, Loom and Rick Dangerous checked on the console
+afterwards (the last three by the owner).
+
+**Cost.** RAM_EMU crossed the `0x24062000` step: the guest pool is 156 frames,
+not 157. ITCM had 24 B and RAM_UC 16 B, so there was nowhere else to put it.
