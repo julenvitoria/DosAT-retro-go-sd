@@ -31,7 +31,7 @@ matter.
 
 | Key | Values | What it does |
 |---|---|---|
-| `cycles` | `max`, or a number | CPU speed in thousands of instructions per second, as in DOSBox. Rounded to the nearest profile in the table below. |
+| `cycles` | `max`, or a number | CPU speed in thousands of instructions per second, as in DOSBox. Rounded to the nearest profile in the table below, except with `[video] vsync_lock = 1`: then the exact number is used (for example `1800`) until you pick another profile in the menu. |
 | `cpu_profile` | `0` … `5` | The profile by its number, directly. |
 
 Profiles (the same as the retro-go menu, PAUSE/SET → CPU Speed):
@@ -72,6 +72,7 @@ The core has two fixed sound cards, and these two keys only **remove** them:
 |---|---|---|
 | `oplmode` | `none` removes it; anything else keeps it | The FM chip (OPL): AdLib music and the Sound Blaster's FM half. |
 | `sbtype` | `none` removes it; anything else keeps it | The Sound Blaster (digitised speech and effects). Without it the `BLASTER` variable is not set either. |
+| `oplrate` | Hz; below 37287 (e.g. `22050`) = **half rate**; unset, `44100`, `48000` or `49716` = full | The rate FM music is synthesised at. At half rate the game runs faster (Wolf3D: +8–11 % frames on the console) and the music sounds slightly duller: same pitch and tempo, without the top octave. |
 
 The names are DOSBox's so a `.cfg` copied from there works, but no model is
 chosen here: `sb16`, `sbpro2`, `opl3`… mean the same as leaving the key out.
@@ -100,6 +101,9 @@ sound wrong with one of them.
 | Key | Values | What it does |
 |---|---|---|
 | `vga_pages` | `0` to `3` | Extra video memory for games that use the "unchained" VGA mode (Mode X/Y). Without the key it is `1`, which suits almost all of them. `2` gives three whole screens (Wolfenstein 3D), at the cost of some of the game's memory. `3` is for games that **scroll the display through all of video memory**, like **Epic Pinball**: without it the table comes out doubled, with black lines, or black at the bottom. |
+| `vga_hz` | `50` to `75` | The vertical retrace rate the game sees. Unset it is `70`, like a real VGA. The panel runs at 60 Hz: with `60`, a game that draws one frame per retrace (Epic Pinball) moves more evenly, but runs a little slower. |
+| `vsync_lock` | `0` or `1` | With `1`, every panel refresh carries exactly one game retrace, with no drift: motion is perfectly even. Unset it is `0`. Only works with a fixed speed in `[cpu] cycles` (not `max`) and `vga_hz = 60`. Example for **Pinball Dreams**: `cycles = 1000`, `vga_hz = 60`, `vsync_lock = 1`. |
+| `retrace_skip` | `0` or `1` | With `1`, when the game sits in a loop waiting for the vertical retrace, the core skips the wait instead of running it: the game sees the time pass but spends no CPU. It also skips the simplest wait there is, a loop that only tests a byte of memory until an interrupt changes it. For games that spend much of each frame waiting, such as **Pinball Dreams 2**; it lets you give them a higher `[cpu] cycles`. Unset it is `0`. Only works with a fixed speed (not `max`). |
 
 When it is set, the core does not take that memory back even if the game is
 short of RAM: you chose the picture for that game. If a game loads more
