@@ -1938,8 +1938,66 @@ __attribute__((always_inline)) static inline int planar_store_leaf(uint32_t off,
     const uint32_t last = a + size - 1u;
     uint8_t *p;
 
-    if (planar_class != PL_PLANE || !x86_vga_modey_armed
-        || x86_vga_modey_flat || !base)
+    /* THE 0Dh LEAF (2026-11-21): one byte, into a page that has storage, in
+       the two classes an EGA title spends its frame in -- the CPU byte into
+       the enabled planes, and the write mode 1 copy of the latched group
+       (Another World's and Keen 4's screen-to-screen moves: 90% of Another
+       World's ~100 K stores a second in its intro, up to 212 K in the
+       elevator scene). The same arithmetic as the general body, inline; a
+       page with no storage, a latch from outside the window or from a page
+       with none, a word or dword, any other write class -- all return 0
+       having touched nothing, and the body runs as before. */
+    if (!x86_vga_modey_armed) {
+        uint8_t *pg;
+
+        if (size != 1u || !x86_vga_ega_armed || !ega_ptab || !base)
+            return 0;
+        pg = ega_ptab[a >> 8];
+        if (!pg)
+            return 0;
+        p = pg + 4u * (a & 0xFFu);
+        if (planar_class == PL_PLANE) {
+            const uint32_t mm = map_mask;
+            const uint8_t v8 = (uint8_t)val;
+
+            if (mm & 1u) p[0] = v8;
+            if (mm & 2u) p[1] = v8;
+            if (mm & 4u) p[2] = v8;
+            if (mm & 8u) p[3] = v8;
+            x86_vga_planar_cls_plane++;
+            if (planar_plane_mask32 == 0xFFFFFFFFu || planar_plane_single >= 0)
+                x86_vga_planar_cls_plane1++;
+        } else if (planar_class == PL_COPY) {
+            const X86CPUState *cpu = cpu_state_ptr;
+            const uint8_t *lp;
+            uint32_t lo;
+
+            if (!cpu)
+                return 0;
+            lo = cpu->vga_latch - (uint32_t)(uintptr_t)base;
+            if (lo >= X86_VGA_APERTURE_BYTES)
+                return 0;               /* a latch MISS: the body counts it */
+            lp = ega_ptab[lo >> 8];
+            if (!lp)
+                return 0;
+            lp += 4u * (lo & 0xFFu);
+            x86_vga_latch_loads++;
+            ega_vstamp[lo >> 8] = ega_epoch;
+            latch[0] = lp[0]; latch[1] = lp[1];
+            latch[2] = lp[2]; latch[3] = lp[3];
+            p[0] = latch[0]; p[1] = latch[1];
+            p[2] = latch[2]; p[3] = latch[3];
+            x86_vga_planar_cls_copy++;
+        } else {
+            return 0;
+        }
+        x86_vga_planar_stores++;
+        ega_vstamp[a >> 8] = ega_epoch;
+        if (a < EGA_SHADOW_OFFSETS)
+            base[a] = cell_read(p);
+        return 1;
+    }
+    if (planar_class != PL_PLANE || x86_vga_modey_flat || !base)
         return 0;
 
     /* A WORD OR DWORD IS STILL ONE ADAPTER OPERATION PER BYTE, each with its
