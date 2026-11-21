@@ -79,6 +79,12 @@ static uint8_t  *pg_flags;
 static uint8_t  *pg_hot;
 static uint8_t  *pg_frame;
 static uint8_t  *frame_hash;    /* 4 B per frame, see file_hash() */
+/* IN THE TABLE BLOCK (DTCM in the core), not in .bss: the two were 1,024 B
+   of RAM_EMU, which is guest frames -- the lazy 0Dh shadow had just cost the
+   157th -- while DTCM had five kilobytes to spare. Set by
+   x86_pager_set_tables(); nothing indexes them before frame_count is set. */
+static uint16_t *frame_page;                /* which guest page holds it */
+static uint16_t *free_list;
 
 int x86_pager_set_tables(void *block, uint32_t bytes)
 {
@@ -89,6 +95,14 @@ int x86_pager_set_tables(void *block, uint32_t bytes)
     pg_hot   = b + X86_PG_PAGES;
     pg_frame = b + 2u * X86_PG_PAGES;
     frame_hash = b + 3u * X86_PG_PAGES;
+    {
+        /* two uint16 arrays after the hashes, on a 4-byte boundary whatever
+           the block's own alignment (X86_PG_TABLE_BYTES carries the slack) */
+        uintptr_t w = ((uintptr_t)(b + 3u * X86_PG_PAGES + 4u * X86_PG_MAX_FRAMES)
+                       + 3u) & ~(uintptr_t)3u;
+        frame_page = (uint16_t *)w;
+        free_list  = frame_page + X86_PG_MAX_FRAMES;
+    }
     x86_pager_reset();
     return 0;
 }
@@ -144,8 +158,7 @@ typedef struct { uint8_t *base; uint32_t first, count; } extent_t;
 static extent_t extents[MAX_EXTENTS];
 static uint32_t extent_count;
 
-static uint16_t frame_page[MAX_FRAMES];     /* which guest page holds it */
-static uint16_t free_list[MAX_FRAMES];
+/* frame_page[] and free_list[] are in the table block: see their declaration. */
 static uint32_t frame_count;
 static uint32_t free_count;
 

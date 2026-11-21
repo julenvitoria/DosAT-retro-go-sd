@@ -139,8 +139,10 @@ typedef int (*x86_pg_write_fn)(uint32_t slot, const void *src);
 /* Frames the pager can ever hold (x86_pager.c's arrays), and one 32-bit
    content hash per frame after the three per-page arrays -- see
    x86_pager.c, "A FILE PAGE THAT DID NOT CHANGE". */
-#define X86_PG_MAX_FRAMES 256u
-#define X86_PG_TABLE_BYTES (3u * X86_PG_PAGES + 4u * X86_PG_MAX_FRAMES)
+#define X86_PG_MAX_FRAMES 160u   /* the pool is 160 frames at most (656,640 B); every frame here is 8 B of DTCM */
+/* ... and the frame -> page and free-list arrays (two uint16 per frame), plus
+   four bytes of alignment slack. */
+#define X86_PG_TABLE_BYTES (3u * X86_PG_PAGES + 8u * X86_PG_MAX_FRAMES + 4u)
 int  x86_pager_set_tables(void *block, uint32_t bytes);
 
 /* Hand the pager the AXI it may hand out, in whole pages. May be called more
