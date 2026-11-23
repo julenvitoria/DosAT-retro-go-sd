@@ -24,8 +24,13 @@ en ensamblador para la consola.
 
 ## Crear el `.dsk` de un juego
 
-Un `.dsk` es una imagen de disco con los archivos del juego dentro. Con la
-carpeta del juego en el PC:
+Un `.dsk` es una imagen de disco con los archivos del juego dentro.
+
+**Lo más fácil: [DOS G&W Imager](https://julenvitoria.github.io/dos-gnw-imager/)**, una página web que crea el `.dsk` y
+su `.cfg` a partir de la carpeta o el `.zip` del juego. No hay que instalar
+nada y los archivos no salen de tu navegador.
+
+Desde la línea de comandos, con la carpeta del juego en el PC:
 
 ```
 python3 scripts/make_dsk.py --src MONKEY --out MONKEY.dsk --autoexec MONKEY

@@ -24,8 +24,13 @@ rewritten in assembly for the console.
 
 ## Making a game's `.dsk`
 
-A `.dsk` is a disk image with the game's files inside. With the game's folder
-on your computer:
+A `.dsk` is a disk image with the game's files inside.
+
+**The easy way: [DOS G&W Imager](https://julenvitoria.github.io/dos-gnw-imager/)**, a web page that makes the `.dsk` and
+its `.cfg` from the game's folder or `.zip`. Nothing to install, and the files
+never leave your browser.
+
+From the command line, with the game's folder on your computer:
 
 ```
 python3 scripts/make_dsk.py --src MONKEY --out MONKEY.dsk --autoexec MONKEY
