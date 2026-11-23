@@ -745,12 +745,22 @@ static unsigned vga_scan_per_row(void)
     return (vga_regs.crtc[0x09] & 0x80u) ? 2u * s : s;
 }
 
-unsigned x86_vga_modex_rows(void)
+/* Rows of picture the guest's vertical timing shows. Pinball Fantasies' tables
+   are 350 (Vertical Display End 0x15D, no doubling): 317 of table over a
+   33-row score board. */
+unsigned x86_vga_guest_rows(void)
 {
     unsigned ov = vga_regs.crtc[0x07];
     unsigned vde = vga_regs.crtc[0x12] | ((ov >> 1) & 1u) << 8
                  | ((ov >> 6) & 1u) << 9;
-    return ((vde + 1u) / vga_scan_per_row() == 240u) ? 240u : 200u;
+    return (vde + 1u) / vga_scan_per_row();
+}
+
+/* Rows the PANEL gives the picture: all 240 for a picture of 240 rows or
+   more (a taller one is squashed into them by the blit), 200 otherwise. */
+unsigned x86_vga_modex_rows(void)
+{
+    return x86_vga_guest_rows() >= 240u ? 240u : 200u;
 }
 
 unsigned x86_vga_split_row(void)
@@ -758,12 +768,16 @@ unsigned x86_vga_split_row(void)
     unsigned lc = vga_regs.crtc[0x18] | ((vga_regs.crtc[0x07] >> 4) & 1u) << 8
                 | ((vga_regs.crtc[0x09] >> 6) & 1u) << 9;
     unsigned row = (lc + 1u) / vga_scan_per_row();
-    return row < x86_vga_modex_rows() ? row : 0xFFFFu;
+    unsigned rows = x86_vga_guest_rows();
+    if (rows < 240u)
+        rows = 200u;
+    return row < rows ? row : 0xFFFFu;
 }
 
 /* Scanlines per row of the picture: 2 when the CRTC doubles (bit 7 of the
    Maximum Scan Line register, or a cell two scanlines high). */
 unsigned x86_vga_scan_per_row(void) { return vga_scan_per_row(); }
+
 
 /* Pixel value n of a 16-colour mode as a DAC index: the attribute palette,
    with Colour Select supplying bits 7-6 always and bits 5-4 when the Mode

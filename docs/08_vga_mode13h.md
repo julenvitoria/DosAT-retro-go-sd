@@ -580,6 +580,23 @@ It is not a new adapter, it is the unchained card with another shifter:
 - The CRTC preset for 12h is the VGA BIOS's (07=3E 09=40 12=DF), because the
   doubling bit above is read back.
 
-Not done: read mode 1 on the flat card, BIOS text/pixel services in 12h, and
-any presentation economy -- the loop paints both LCD buffers every frame while
-the mode is up (~5 ms each), which a menu can afford and a game could not.
+- The first version lifted the pixels with shifts alone and the loop painted
+  BOTH LCD buffers every frame: ~14 ms of a 16.7 ms frame. Pinball Fantasies'
+  title ran at 34 fps with 1.55 M insns/s, loaded for a minute and ignored
+  START the whole time -- the owner never reached the table (2026-11-23). Now
+  the cell goes through a 256-entry table built on the stack per paint, and the
+  loop's own paint of 12h does the active buffer only (it repaints every frame,
+  so the swap carries it): 55 fps, 2.55 M insns/s.
+
+Not done: read mode 1 on the flat card, BIOS text/pixel services in 12h.
+
+### A picture taller than the panel (2026-11-23)
+
+Pinball Fantasies' tables are unchained 320x350 (Vertical Display End 0x15D, no
+doubling), the top 317 rows a scrolling table and the 33 under the Line Compare
+a dot-matrix score board. Shown one row for one, the flippers and the board
+were off the bottom of the panel. `x86_vga_guest_rows()` is the picture's real
+height; at 240 or more the panel gives it all 240 rows (`x86_vga_modex_rows`)
+and `vga13_blit` drops rows to fit. When the split leaves a short strip below
+it, the strip keeps every row -- dots with rows missing are not digits -- and
+the part above takes the squash alone (317 -> 207).

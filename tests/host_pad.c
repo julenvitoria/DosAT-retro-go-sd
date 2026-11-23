@@ -41,7 +41,7 @@ int main(void)
           "select = none\r\narriba = q\r\nx = f5\r\n", &r);
     check(r.applied == 6 && r.bad == 0, "six bindings applied, none refused");
     check(x86_pad_keys[4][0] == 0x2A && x86_pad_keys[4][1] == 0, "a = shift");
-    check(x86_pad_keys[5][0] == 0x1D && x86_pad_keys[5][1] == 0x38 && x86_pad_keys[5][2] == 0x53, "b = ctrl+alt+del");
+    check(x86_pad_keys[5][0] == 0x1D && x86_pad_keys[5][1] == 0x38 && x86_pad_keys[5][2] == (X86_PAD_EXT | 0x53), "b = ctrl+alt+del (del is a grey key)");
     check(x86_pad_keys[7][0] == 0x31, "time = n (':' separator)");
     check(x86_pad_keys[9][0] == 0, "select = none unbinds");
     check(x86_pad_keys[0][0] == 0x10, "arriba (Spanish alias) = q");
@@ -69,6 +69,17 @@ int main(void)
     n_emitted = 0;
     x86_pad_button(X86_PAD_GAME, 1, emit);
     check(n_emitted == 0, "an unbound button emits nothing");
+
+    /* the grey keys carry E0 on make and on break; the numeric pad does not */
+    parse("[gamepad]\ndown = down\nup = kp8\n", &r);
+    n_emitted = 0;
+    x86_pad_button(1, 1, emit);
+    x86_pad_button(1, 0, emit);
+    x86_pad_button(0, 1, emit);
+    x86_pad_button(0, 0, emit);
+    check(n_emitted == 6 && emitted[0] == 0xE0 && emitted[1] == 0x50 && emitted[2] == 0xE0 && emitted[3] == 0xD0
+          && emitted[4] == 0x48 && emitted[5] == 0xC8,
+          "down arrow is E0 50 / E0 D0; kp8 is a bare 48 / C8");
 
     /* typematic repeat: nothing before 500 ms, then every 50 ms, last key only */
     parse("[gamepad]\nb = ctrl+c\na = shift\n", &r);

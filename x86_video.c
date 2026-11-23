@@ -907,8 +907,9 @@ void x86_vga_dac_set_block(unsigned first, unsigned count, const uint8_t *rgb)
  * left one unless it is colour 0 (blit_ega16_wide's rule, for the same reason:
  * a one-pixel stroke on a black ground survives whichever column it is in).
  * A cell is the four plane bytes of eight pixels; the shifts below lift its
- * even and its odd pixels into four bytes each without a table, which RAM_EMU
- * has no room for. Colours go through the attribute palette and Colour Select
+ * even and its odd pixels into four bytes each through a table built on the
+ * stack (the first version did it with shifts alone and cost 7 ms a paint: the
+ * title ran at 34 fps with half the CPU in here). Colours go through the attribute palette and Colour Select
  * (x86_vga_attr16) into DAC indices, and the panel's CLUT is the DAC.
  */
 static void blit_vga12(uint8_t *dst, uint32_t stride)
@@ -919,6 +920,14 @@ static void blit_vga12(uint8_t *dst, uint32_t stride)
 
     for (unsigned i = 0; i < 16u; i++)
         lut[i] = (uint8_t)x86_vga_attr16(i);
+    /* A plane byte's four EVEN pixels, one per byte. Built per paint, on the
+       stack: 2,560 shifts against 19,200 cells that each needed sixteen, and
+       RAM_EMU has no kilobyte to keep it in. The odd pixels are the same
+       table one bit along. */
+    uint32_t ev[256];
+    for (unsigned i = 0; i < 256u; i++)
+        ev[i] = ((i >> 7) & 1u) | (((i >> 5) & 1u) << 8)
+              | (((i >> 3) & 1u) << 16) | (((i >> 1) & 1u) << 24);
     /* 480 scanlines onto 240 rows: every other row of a 640x480 picture, or
        every row of one the guest has double-scanned down to 640x240 (Pinball
        Fantasies' menu). */
@@ -939,15 +948,13 @@ static void blit_vga12(uint8_t *dst, uint32_t stride)
             if (n > 80u - x)
                 n = 80u - x;
             for (c = pb + 4u * a; n--; c += 4, x++) {
-                uint32_t e = 0, o = 0, m;
+                uint32_t e, o, m;
 
-                for (unsigned k = 0; k < 4u; k++) {
-                    const uint32_t b = c[k];
-                    e |= (((b >> 7) | (b << 3) | (b << 13) | (b << 23))
-                          & 0x01010101u) << k;
-                    o |= (((b >> 6) | (b << 4) | (b << 14) | (b << 24))
-                          & 0x01010101u) << k;
-                }
+                e = ev[c[0]] | (ev[c[1]] << 1) | (ev[c[2]] << 2)
+                  | (ev[c[3]] << 3);
+                o = ev[(c[0] << 1) & 0xFFu] | (ev[(c[1] << 1) & 0xFFu] << 1)
+                  | (ev[(c[2] << 1) & 0xFFu] << 2)
+                  | (ev[(c[3] << 1) & 0xFFu] << 3);
                 m = ((e | (e >> 1) | (e >> 2) | (e >> 3)) & 0x01010101u) * 0xFFu;
                 e = (e & m) | (o & ~m);
                 dst[4u * x]      = lut[e & 15u];
@@ -1001,10 +1008,24 @@ static void vga13_blit(uint8_t *dst, uint32_t stride)
        dropped the letterbox for 240. */
     const unsigned rows  = x86_vga_modex_rows();
     const unsigned split = x86_vga_split_row();
+    /* A PICTURE TALLER THAN THE PANEL is squashed by dropping rows. Pinball
+       Fantasies' tables are 350 rows -- shown one for one, the flippers and
+       the score board were simply off the bottom. When the split leaves a
+       short strip below it (the dot-matrix board, 33 rows), that strip keeps
+       every row, because dots with rows missing are not digits, and the part
+       above takes the squash alone; otherwise the whole picture shares it. */
+    const unsigned grows = x86_vga_guest_rows();
+    unsigned top = rows, tsrc = grows;
+    if (grows > rows && split < grows && grows - split < rows / 2u) {
+        top  = rows - (grows - split);
+        tsrc = split;
+    }
 
     for (unsigned y = 0; y < rows; y++, dst += stride) {
-        const uint32_t row_a = (y < split) ? start + y * pitch
-                                           : (y - split) * pitch;
+        const unsigned gy = grows <= rows ? y
+                          : y < top ? y * tsrc / top : split + (y - top);
+        const uint32_t row_a = (gy < split) ? start + gy * pitch
+                                            : (gy - split) * pitch;
         /* The CORE owns the page fold, and it is NOT a mask -- the page stride
            is whatever the guest programmed, and WOLF3D's is 16,640. This is the
            same lookup the store path uses, so the blit and the writes cannot

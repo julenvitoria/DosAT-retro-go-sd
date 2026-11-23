@@ -741,6 +741,19 @@ x86_cpu_interp_asm:
     MOVT R2, #(X86_TRACE_LOWSP >> 16)
     CMP R1, R2
     BHS.N 2f
+#elif defined(X86_TRACE_EIPLO)
+    /* "The guest is executing DATA." First instruction with linear EIP in
+       [X86_TRACE_EIPLO, X86_TRACE_EIPHI) -- a module's data segment, a sample
+       bank. X86_TRACE_EIPREG on the place it finally dies shows only the sled
+       it slid down; this fires on the first step into it, so the ring holds
+       the transfer that got it there (Pinball Fantasies, 2026-11-23). */
+    MOVW R2, #(X86_TRACE_EIPLO & 0xFFFF)
+    MOVT R2, #(X86_TRACE_EIPLO >> 16)
+    SUBS.W R1, R10, R2
+    MOVW R2, #((X86_TRACE_EIPHI - X86_TRACE_EIPLO) & 0xFFFF)
+    MOVT R2, #((X86_TRACE_EIPHI - X86_TRACE_EIPLO) >> 16)
+    CMP R1, R2
+    BHS.W 2f
 #elif defined(X86_TRACE_LOWEIP)
     /* "The guest is executing somewhere it can never legitimately be." A linear
        EIP below the DOS load area is not a subtle invariant like an odd SP --

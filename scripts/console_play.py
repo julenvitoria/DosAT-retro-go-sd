@@ -13,6 +13,7 @@ masked tiles black; Dark Forces "loading for three minutes" was sitting at
     console_play.py step ELF out.png "1 press start; 4 hold left 2; 5 press a"
     console_play.py shot ELF out.png       # capture the panel, nothing else
     console_play.py watch ELF [-n 12] [-i 10]   # speed / pager / SD, sparsely
+    console_play.py death ELF              # a stopped guest: CS:EIP, SS:SP, bytes
     console_play.py restore-config         # LAST: put the owner's /CONFIG back
 
 `step` attaches, replays the events (times in seconds from the attach; the
@@ -187,6 +188,36 @@ def cmd_watch(a):
         print("NO SAMPLES", (r.stdout + r.stderr)[-300:])
 
 
+def cmd_death(a):
+    """Where a stopped guest stopped: the CPU's own CS:EIP / SS:SP (the cpu_*
+    rows of probe_report.py) and the bytes there. R10 is stale once the
+    interpreter has left, so `probe.py --reg r10` cannot answer this."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import probe_report
+    from common.elf import get_symbols
+    from gnwmanager.ocdbackend.openocd_backend import OpenOCDBackend
+    syms = get_symbols(a.elf)
+    b = OpenOCDBackend()
+    b.open()
+    b.halt()
+    ctx = {}
+    try:
+        for k in ("guest_exit_reason", "guest_halted"):
+            ctx[k] = b.read_uint32(syms[k])
+        probe_report._read_death_site(b, syms, ctx)
+    finally:
+        b.resume()
+        b.close()
+    print("  ".join(f"{k}={v:#x}" for k, v in ctx.items()))
+    lin = ctx.get("cpu_lin_eip")
+    if lin is not None:
+        r = py("scripts/probe.py", "--retrogo", "--target", "hardware",
+               "--no-flash", "--elf", a.elf, *FW, "--interval", "1",
+               "--samples", "1", "--guest", f"{max(lin - 32, 0):#x}:96=CSIP-32",
+               capture_output=True)
+        print("\n".join(l for l in r.stdout.splitlines() if "+00" in l or "CSIP" in l))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--firmware-dir", help="retro-go build directory, for a "
@@ -212,6 +243,9 @@ def main():
     p.add_argument("out")
     p.add_argument("events")
     p.set_defaults(fn=cmd_step)
+    p = sub.add_parser("death")
+    p.add_argument("elf")
+    p.set_defaults(fn=cmd_death)
     p = sub.add_parser("watch")
     p.add_argument("elf")
     p.add_argument("-n", "--samples", type=int, default=7)

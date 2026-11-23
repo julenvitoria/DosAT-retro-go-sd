@@ -2958,10 +2958,10 @@ static void guest_reset(void)
    THIS IS THE DEFAULT, not the binding: a title's .cfg can replace any entry
    but GAME with a [gamepad] section (x86_pad.h), keys and combos alike. */
 static const uint8_t pad_scancode[10] = {
-    0x48,  /* UP                      -> Up arrow    */
-    0x50,  /* DOWN                    -> Down arrow  */
-    0x4B,  /* LEFT                    -> Left arrow  */
-    0x4D,  /* RIGHT                   -> Right arrow */
+    X86_PAD_EXT | 0x48,  /* UP    -> Up arrow, the grey one (E0 48) */
+    X86_PAD_EXT | 0x50,  /* DOWN  -> Down arrow  */
+    X86_PAD_EXT | 0x4B,  /* LEFT  -> Left arrow  */
+    X86_PAD_EXT | 0x4D,  /* RIGHT -> Right arrow */
     0x39,  /* A                       -> Space       */
     0x1C,  /* B                       -> Return (owner's layout, 2026-10-22:
               A Space, B Return, START Y, SELECT N, TIME Esc) */
@@ -4229,6 +4229,12 @@ static void modey_hud_frame(const gw_firmware_abi_t *abi)
     modey_hud_was = (uint8_t)vis;
 }
 
+/* 2, except for the frame loop's own paint of mode 12h: that one repaints
+   every frame, so the active buffer alone is enough and the swap carries it
+   -- the rule every non-aliased mode already follows. Painting both cost the
+   640x480 title half its CPU. */
+static uint8_t modey_paint_bufs = 2;
+
 static void modey_paint_both(const gw_firmware_abi_t *abi)
 {
     /* VPROF: the PARENT bracket. x86_video_render() and x86_osk_draw() carry
@@ -4236,7 +4242,7 @@ static void modey_paint_both(const gw_firmware_abi_t *abi)
        mode-check work around them. See x86_vprof.h on why these three are
        deliberately not exclusive. */
     X86_VPROF_BEGIN(pt);
-    for (unsigned which = 0; which < 2; which++) {
+    for (unsigned which = 0; which < modey_paint_bufs; which++) {
         uint8_t *fb = (uint8_t *)(which ? abi->lcd_get_inactive_buffer()
                                         : abi->lcd_get_active_buffer());
         if (!fb)
@@ -5982,7 +5988,10 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                        only the guest's own flips, so this is the half of the
                        paint budget no counter has ever shown. */
                     X86_VPROF_COUNT(x86_vprof_paint_loop);
+                    if (x86_video_mode_byte == 0x12)
+                        modey_paint_bufs = 1;
                     modey_paint_both(abi);
+                    modey_paint_bufs = 2;
                     x86_video_modey_presented(0);
                 } else {
                     x86_video_render(fb, FRAME_W);

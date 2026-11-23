@@ -218,7 +218,32 @@ def main():
         ext_n = fw_syms.get("ext_clut_count")
         ext_addr = b.read_uint32(ext_p) if ext_p else 0
         ext_count = (b.read_uint32(ext_n) & 0xFFFF) if ext_n else 0
-        if ext_addr and ext_count:
+        # THE CORE'S OWN TABLE FIRST, when it has a 256-colour mode up. The
+        # two firmware reads below trust the firmware ELF on the PC to be the
+        # firmware on the console; when the owner flashed a newer retro-go,
+        # `active_clut` had moved by 32 bytes and every capture came back with
+        # the palette shifted eight entries -- a day lost to "wrong colours"
+        # that were only ever in the PNG. The core ELF is the one we deployed.
+        own_p = core_syms.get("vga_clut256") if hasattr(core_syms, "get") else None
+        own = b.read_uint32(own_p) if own_p else 0
+        mode_now = b.read_uint32(core["x86_video_mode_byte"]) & 0xFF
+        if own and mode_now in (0x12, 0x13):
+            clut = [b.read_uint32(own + 4 * i) for i in range(256)]
+            print(f"core palette: 256 entries at 0x{own:08x} (vga_clut256)")
+        elif core_syms.get("core_clut"):
+            # Every other mode: the 32 entries the core hands lcd_set_clut(),
+            # and the firmware's own rule for the rest -- entry count+i is
+            # entry i at 60% (LCD_DARKEN_PERCENT 40), which is what the overlay
+            # dims with. Same reason as above: the firmware's table is only
+            # where the firmware ELF says it is if that ELF is what is flashed.
+            base = [b.read_uint32(core_syms["core_clut"] + 4 * i)
+                    for i in range(32)]
+            dark = [(((c >> 16) & 0xFF) * 60 // 100) << 16
+                    | (((c >> 8) & 0xFF) * 60 // 100) << 8
+                    | ((c & 0xFF) * 60 // 100) for c in base]
+            clut = base + dark
+            print("core palette: 32 entries (core_clut) + their darkened twins")
+        elif ext_addr and ext_count:
             clut = [b.read_uint32(ext_addr + 4 * i) for i in range(ext_count)]
             print(f"external palette: {ext_count} entries at 0x{ext_addr:08x} "
                   f"(a 256-colour mode owns the whole table)")
