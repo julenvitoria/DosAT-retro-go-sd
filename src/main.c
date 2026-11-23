@@ -674,6 +674,7 @@ static uint32_t   rate_window_frames;
    per second, with guest_ticks_dropped climbing ~100/s. 24 covers 473 Hz
    down to 20 fps and 560 Hz down to 24. */
 #define TICK_CARRY_MS          16u    /* collided ticks carried to the next frame */
+#define ONESHOT_MIN_INSNS 48u  /* mode 0: see the re-plan */
 #define TICK_MIN_INSNS 2500u   /* see the phase plan: no closer ticks than this */
 #define TICK_IRQ_MAX          512u
 #define TICK_STALL_MS        1000u    /* longer than this is a stall, not lag */
@@ -5825,6 +5826,23 @@ static void emulator_loop(const gw_firmware_abi_t *abi)
                     if (x86_pit_ch_mode[0] == 0u) {
                         per = nd * ((x86_pit_kips ? x86_pit_kips : 5500u) >> 4) / 75u;
                         per_next = 0x7FFFFFFFu;
+                        /* NOT BEFORE THE HANDLER THAT LOADED IT HAS PUT ITS
+                           BOOKS IN ORDER. Pinball Fantasies' INT 08h loads
+                           (next event - time already gone - 10) and only then
+                           advances its event pointer, three instructions on.
+                           Our IRQ 0 can arrive late by most of an event (a
+                           key in the one-deep slot), the count comes out a
+                           handful of ticks, and the next IRQ landed between
+                           the load and the advance: the pointer moved twice,
+                           past the end marker, and the event after called a
+                           NULL handler (console, 2026-11-23: 1 paced
+                           launch in 6 reached the table without this floor,
+                           12 in 16 with it -- what kills the other four is
+                           not found; also refusing a second IRQ 0 per load
+                           was tried on top and changed nothing, 6 in 8). A real 386 needs longer than
+                           that for the three instructions anyway. */
+                        if (per < ONESHOT_MIN_INSNS)
+                            per = ONESHOT_MIN_INSNS;
                     }
                     if (!per)
                         per = 1u;
