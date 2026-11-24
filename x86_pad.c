@@ -43,15 +43,23 @@ static const char key_names[] =
     "inicio\0fin\0repag\0avpag\0"
     /* mouse buttons (x86_mouse.h), not keys */
     "click\0click2\0clic\0clic2\0";
+/* E marks the GREY keys -- the arrows and the six above them. A 101-key
+   keyboard sends those with an 0xE0 prefix, and a handler may accept nothing
+   else: Pinball Fantasies pulls its plunger on E0 50 and ignores a bare 50, so
+   the ball could not be launched (2026-11-23). kp0..kp9 are the same codes
+   WITHOUT the prefix, which is what the numeric pad sends. */
+#define E X86_PAD_EXT
 static const uint8_t key_codes[] = {
     0x01, 0x0C, 0x0D, 0x0E, 0x0F, 0x1A, 0x1B, 0x1C, 0x1D, 0x27, 0x28, 0x29, 0x2A, 0x2B,
-    0x33, 0x34, 0x35, 0x36, 0x38, 0x39, 0x3A, 0x47, 0x48, 0x49, 0x4B, 0x4D,
-    0x4F, 0x50, 0x51, 0x52, 0x53, 0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48,
+    0x33, 0x34, 0x35, 0x36, 0x38, 0x39, 0x3A, E|0x47, E|0x48, E|0x49, E|0x4B, E|0x4D,
+    E|0x4F, E|0x50, E|0x51, E|0x52, E|0x53, 0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48,
     0x49, 0x4A, 0x4E, 0x37, 0x27,
-    0x1C, 0x39, 0x2A, 0x0E, 0x53, 0x48, 0x50, 0x4B, 0x4D,
-    0x47, 0x4F, 0x49, 0x51,
+    0x1C, 0x39, 0x2A, 0x0E, E|0x53, E|0x48, E|0x50, E|0x4B, E|0x4D,
+    E|0x47, E|0x4F, E|0x49, E|0x51,
     X86_PAD_CLICK_L, X86_PAD_CLICK_R, X86_PAD_CLICK_L, X86_PAD_CLICK_R,
 };
+
+#undef E
 
 /* button names -> poll_input() bit; aliases share a bit */
 static const struct { const char *name; uint8_t bit; } button_names[] = {
@@ -232,6 +240,14 @@ void x86_pad_parse(const unsigned char *buf, unsigned long len, x86_pad_result_t
         *out = r;
 }
 
+/* One make or break code, with the 0xE0 prefix a grey key carries on both. */
+static void emit_key(uint8_t k, uint8_t brk, void (*emit)(uint8_t sc))
+{
+    if (k & X86_PAD_EXT)
+        emit(0xE0);
+    emit((uint8_t)((k & 0x7Fu) | brk));
+}
+
 void x86_pad_button(unsigned i, int down, void (*emit)(uint8_t sc))
 {
     int n = 0, j;
@@ -242,9 +258,9 @@ void x86_pad_button(unsigned i, int down, void (*emit)(uint8_t sc))
     while (n < X86_PAD_KEYS && x86_pad_keys[i][n])
         n++;
     if (down)
-        for (j = 0; j < n; j++) emit(x86_pad_keys[i][j]);
+        for (j = 0; j < n; j++) emit_key(x86_pad_keys[i][j], 0, emit);
     else
-        for (j = n - 1; j >= 0; j--) emit((uint8_t)(x86_pad_keys[i][j] | 0x80));
+        for (j = n - 1; j >= 0; j--) emit_key(x86_pad_keys[i][j], 0x80, emit);
 }
 
 unsigned x86_pad_repeat(uint32_t held, uint32_t now_ms, void (*emit)(uint8_t sc))
@@ -274,7 +290,7 @@ unsigned x86_pad_repeat(uint32_t held, uint32_t now_ms, void (*emit)(uint8_t sc)
             while (n < X86_PAD_KEYS && x86_pad_keys[i][n])
                 n++;
             if (n && !is_modifier(x86_pad_keys[i][n - 1])) {
-                emit(x86_pad_keys[i][n - 1]);
+                emit_key(x86_pad_keys[i][n - 1], 0, emit);
                 sent++;
             }
         }

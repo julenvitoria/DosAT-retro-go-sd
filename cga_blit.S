@@ -68,7 +68,15 @@
     .endr
     .endm
 
+/* X86_DIAG_CGA_COLD: a TRACE build (TOOLING.md, the invariant traps) needs
+   ~120 B of ITCM the stock build does not have; this is the 1.5 KB that can
+   leave for the length of a diagnosis of any title that is not CGA. It costs
+   the guest one pager frame, so never ship it. */
+#ifdef X86_DIAG_CGA_COLD
+    .section .text.cga_mode4_blit, "ax", %progbits
+#else
     .section .itcram_hot, "ax", %progbits
+#endif
     .global cga_mode4_blit
     .type cga_mode4_blit, %function
     .align 2

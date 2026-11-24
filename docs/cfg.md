@@ -148,6 +148,8 @@ Lo mismo se puede escribir con claves sueltas, en cualquier sección:
 | `repeat` | `on` / `off` | Repetición al mantener un botón pulsado (por defecto `on`). |
 | `mouse` | `on` / `off` | Ratón: la cruceta mueve el puntero y A/B son los botones izquierdo y derecho (salvo que los cambies). |
 
+**Flechas y teclas grises.** `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`, `ins` y `del` (y sus nombres en español) se envían como las teclas grises de un teclado de 101 teclas, con su prefijo `E0`, que es lo que algunos juegos exigen (Pinball Fantasies solo tira del muelle así). `kp0`…`kp9` son las mismas teclas del teclado numérico, sin prefijo, por si un juego antiguo las quiere así.
+
 ## Opciones de los propios juegos (sonido, vídeo…)
 
 Esto ya no es del emulador sino de cada juego: muchos se configuran con una

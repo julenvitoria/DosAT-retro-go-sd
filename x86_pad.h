@@ -64,6 +64,9 @@ extern "C" {
    break codes (| 0x80) stay distinct from every make code, so they travel the
    same emit path as keys and src/main.c's emitter routes them to
    x86_mouse_button() instead of the keyboard controller. */
+/* Bit 7 of a stored key: a grey (extended) key, sent as E0 + code. Make codes
+   are below 0x80, so the bit is free in x86_pad_keys[]. */
+#define X86_PAD_EXT     0x80
 #define X86_PAD_CLICK_L 0x71
 #define X86_PAD_CLICK_R 0x72
 

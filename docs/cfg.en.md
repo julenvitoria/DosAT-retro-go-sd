@@ -145,6 +145,8 @@ when the `.cfg` gives none).
 | `repeat` | `on` / `off` | Repeat while a button is held (default `on`). |
 | `mouse` | `on` / `off` | Mouse: the d-pad moves the pointer and A/B are the left and right buttons (unless you change them). |
 
+**Arrows and grey keys.** `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdn`, `ins` and `del` are sent as the grey keys of a 101-key keyboard, with their `E0` prefix, which some games insist on (Pinball Fantasies only pulls its plunger that way). `kp0`…`kp9` are the same keys on the numeric pad, without the prefix, for an old game that wants them so.
+
 ## The games' own options (sound, video…)
 
 This is not part of the emulator but of each game: many are configured with a

@@ -410,6 +410,7 @@ the linear EIPs that led there**. Read the whole block with
 | `X86_TRACE_ODDSP` | turns the trap on at all (required by the others) |
 | `X86_TRACE_ODDREG R` | first boundary where guest register `R` is ODD; default `REG_ESP`. A 16-bit DOS guest moves SP by two for its whole life, so an odd SP is a defect at the instant it happens |
 | `X86_TRACE_LOWEIP N` | first instruction with linear EIP below `N`. "The guest is running the IVT as code" — fires EARLIER in a derailment than any register predicate, so reach for it first |
+| `X86_TRACE_EIPLO A` + `X86_TRACE_EIPHI B` | first instruction with linear EIP in `[A, B)` — "the guest is executing DATA". `EIPREG` on the address a derailed guest finally dies at shows only the sled it slid down; this fires on the first step into the region, so the ring holds the transfer that got it there. A trace build overflows ITCM by ~120 B: add `-DX86_DIAG_CGA_COLD` (moves `cga_mode4_blit` out for the diagnosis, never ship it) |
 | `X86_TRACE_LOWSP N` | first boundary with SP below `N`, for a push/pop imbalance whose single leak is invisible and whose drift is not |
 | `X86_TRACE_MEMEQ A` + `X86_TRACE_MEMVAL V` | first boundary at which the guest 16-bit word at linear `A` equals `V` — a store watch. A hardware watchpoint cannot do this job here: the host address of a guest page is only known once its fold entry is live, and a guest that halts a second after it starts leaves no window in which a host-side tool can resolve and arm one (`watch_memory.py` armed on a stale entry and pointed at 0x02255706, which is not a host address at all). This fires on the instruction AFTER the store, and the ring names the writer |
 | `X86_TRACE_ATEIP A` (+ `X86_TRACE_ATREG R`) | changes what the RING holds: register `R` (default `REG_ESP`) sampled at exactly one guest EIP, one entry per pass. The ring INDEX at `[7]` is then a hit count, which answers "was this instruction ever executed at all" — a 0 there is how the only writer of a variable was shown never to run. A slow stack leak cannot be found with a threshold — the drift is smaller than normal frame churn, so any bound low enough to miss a legitimate `sub sp,N` prologue is already past the start. Sampling the same instruction every iteration makes the per-iteration delta the reading |
@@ -993,6 +994,14 @@ may declare `mask` rectangles, but only with a written `mask_reason` (enforced),
 and masked pixels are still counted and printed (`m` in the block map). A
 tolerance wide enough to absorb a moving sprite is wide enough to absorb the
 corruption the gate exists to catch.
+
+**The capture is coloured from the CORE's own table** (`vga_clut256` in mode
+13h / 12h, `core_clut` plus computed darkened twins in every other mode,
+through the core ELF), not from the firmware's. The firmware
+reads below trust the firmware ELF on the PC to BE the firmware on the console;
+when the owner flashed a newer retro-go, `active_clut` had moved 32 bytes and
+every capture came back with the palette shifted eight entries -- "wrong
+colours" that were only ever in the PNG (2026-11-23).
 
 **Which palette the capture is coloured with** (`read_active_clut`,
 `scripts/common/screen.py`): a firmware with `ext_clut` is read from there;
@@ -2850,6 +2859,9 @@ python3 scripts/console_play.py step build/core/dos_core.elf build/artifacts/k1.
         "1 press start; 4 press a; 7 hold left 2"    # then captures the panel
 python3 scripts/console_play.py shot  build/core/dos_core.elf build/artifacts/k2.png
 python3 scripts/console_play.py watch build/core/dos_core.elf -n 7 -i 10
+python3 scripts/console_play.py death build/core/dos_core.elf   # a STOPPED guest:
+        # the CPU's own CS:EIP, SS:SP and exit info (`probe.py --reg r10` is
+        # stale once the interpreter has left)
 python3 scripts/console_play.py restore-config       # LAST: verified byte for byte
 ```
 
