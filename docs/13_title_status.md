@@ -94,8 +94,8 @@ which we have had all along — is never issued.
 
 **These measurements are SOUND — 2026-08-15, before the tier-2 break — but all
 three blockers have since been BUILT.** `INT imm8` with `CR0.PE` set is now
-delivered through an IDT gate with a same-privilege `IRET` (`3688f69`,
-`e6789b2`), and `0F A0`/`A1`/`A8`/`A9` PUSH/POP FS,GS are in (`e70db05`). So
+delivered through an IDT gate with a same-privilege `IRET` (`45c1710`,
+`cb8a41a`), and `0F A0`/`A1`/`A8`/`A9` PUSH/POP FS,GS are in (`5834864`). So
 none of these three titles stops where this table says any more, and **where
 each stops NOW IS UNMEASURED** — it is the next measurement on the list and it
 is blocked on tier 2. Kept for the `CR0`/`CS:EIP` evidence that the descriptor
@@ -123,7 +123,7 @@ Health on all three: `core_ready=1`, `x86_pg_frames_total=155`,
 own cost, identical with and without this change), `x86_pg_exhausted=0`,
 `x86_dos_load_shorts=0`.
 
-## Console pass — 2026-11-20/21, played on the device, core `028d8b5`
+## Console pass — 2026-11-20/21, played on the device, core `66ac6f5`
 
 Each title was launched and played on the console with
 `scripts/console_play.py` and judged from captures of the real panel; "owner"
@@ -506,12 +506,12 @@ tier 2, `probe.py --dos-log --io-log` plus temporary `dbg_*` captures in
    DOS4GW (`4Bh/03`) with `C:\DARK.EXE` in the PSP tail and a fresh 5-para
    environment at `9FFA`. DOS4GW then walks its own BW chain (EXPLOAD,
    LINEXE, INT31W, WVMM, DOS4GW.EXP: offsets F2A4..30144, EOF at 3E0F4), all
-   of which is NORMAL. AH=33h is answered now (`d7061e6`).
+   of which is NORMAL. AH=33h is answered now (`5b46f45`).
 2. **Locked-XMS alias pages could not be paged out.** `x86_pgfile`'s slot ring
    maps only the low 8 MB and the EMS window, so an evicted page of the 8..16 MB
    alias was "unpageable" (445 in one run), lost, and refilled as zeroes.
    DOS/4GW keeps its GDT/LDT in its XMS block (GDTR = `0x800010`, limit
-   `0x3FFF`; LDTR the same table). Fixed in `pgf_read/pgf_write` (`16bfc06`):
+   `0x3FFF`; LDTR the same table). Fixed in `pgf_read/pgf_write` (`00a4619`):
    those pages go to the XMS store at their own offset. Now 0 unpageable,
    0 io errors.
 
@@ -839,7 +839,7 @@ Why DPMI/VCPI/XMS stays unbuilt:
 
 **UPDATE 2026-09-02, documentation only.** The opcode that ended the run below
 was later read correctly as `exit_info=0x0FA0` = `PUSH FS`, and **`0F A0`/`A1`/
-`A8`/`A9` PUSH/POP FS,GS are now implemented (`e70db05`)**. The `IN 0x22A`
+`A8`/`A9` PUSH/POP FS,GS are now implemented (`5834864`)**. The `IN 0x22A`
 64,000-read spin is also gone (6 reads; the DSP resets twice, issues 5 commands
 with none unknown, programs the mixer and 22,050 Hz). **Where Epic Pinball stops
 now is UNMEASURED and blocked on tier 2** (banner at the top of this file).

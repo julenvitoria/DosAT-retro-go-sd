@@ -102,7 +102,7 @@ and KEEN4 10.9 M of startup/intro.
 | operand fold + seam check | 7 | already minimal |
 | flags after an ALU op | 16-17 | `MRS` + 5 serial `BFI` on R11, PF always computed; 96 sites |
 | ALU sub-op select | 2 | second shared indirect branch (`TBH`) |
-| `Jcc` condition (before `0996688`) | 13 (`JZ`) .. 37 (`JLE`) | `EVAL_COND` compare chain |
+| `Jcc` condition (before `dc35080`) | 13 (`JZ`) .. 37 (`JLE`) | `EVAL_COND` compare chain |
 | register index | 3 per operand | `AND`/`LSL #2`/`ADD #8`; 90 sites |
 
 Totals with dispatch: `MOV r,r` 34, `MOV ax,[bp+6]` 70, `MOV [bp+6],ax` 74,
@@ -126,7 +126,7 @@ This is restructuring the C, not the rejected "planar_store in assembly".
 
 | # | change | est. saving | ITCM | state |
 |---|---|---|---|---|
-| A1 | dedicated short `Jcc` for 72-77, 7C-7F | 15-35 cyc per Jcc | +424 B | DONE `0996688`. Tier 3: 11.62 -> 12.03 fps (+3.5%); dedicated Jcc 18 cyc, generic 77 |
+| A1 | dedicated short `Jcc` for 72-77, 7C-7F | 15-35 cyc per Jcc | +424 B | DONE `dc35080`. Tier 3: 11.62 -> 12.03 fps (+3.5%); dedicated Jcc 18 cyc, generic 77 |
 | A2 | register index in 1 insn + narrow encodings in hot handlers | 1-2 cyc/insn | -700 B | next |
 | A3 | table-driven 16-bit ModRM (24 straight-line entries) | 10-18 cyc per memory operand | +500 B | |
 | B1 | planar hook: no veneers, leaf entry, section anchors | 171 -> 80-100 cyc, up to ~10% of wall | +144 B | DONE (with B2a). Tier 3: `88` 209 -> 152 cyc; alone +5% ips, fps flat |
@@ -142,7 +142,7 @@ Considered and dropped before building: skipping the VGA check in
 bodies). If ITCM runs out, `cga_mode4_blit` (1,508 B, per frame) leaves first,
 then `font8x8` (2,048 B). **To measure a step:** `guest_ips_achieved` and
 `x86_modey_presents`/s over `timelines/wolf3d-hw.tl`, oc level 0, base core
-`5699d99` against the step's commit. A step that gains nothing measurable is
+`7ebc85d` against the step's commit. A step that gains nothing measurable is
 reverted and listed under REJECTED in `CLAUDE.md` with its number.
 
 ### Tier 3 profile of WOLF3D GAMEPLAY (2026-11-20) -- it reorders the plan

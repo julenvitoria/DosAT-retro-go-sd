@@ -32,10 +32,10 @@ Everything that is not Dark Forces. **Done this session:**
 2. ~~**Guest RAM -> NOR watchdog**~~ — the flash was innocent; both un-kicked stretches were ours (a menu callback outside the frame loop, and the slice regulator's 1/8-per-frame correction against an attach that changes an instruction's price in ONE step). `nor_snap_wdog_gap_ms` is the witness, **not yet read on silicon**. **Unreachable meanwhile**: the pool is short of 160 frames so `nor_snap_result=2` — and HOW short is itself in dispute (STATUS.md, "the frame count is in conflict"): 160/0-short by delta arithmetic against a tier-2 baseline vs 154 as the budget gate's static upper bound. Only tier 2 settles it.
 3. ~~**Sound**~~ — SB16 (8237 DMA, IRQ 5 via the 8259, DSP 4.05, CT1745 mixer, `BLASTER`) **and** OPL2 FM via **emu8950**, vendored from the owner's gnw-doom with its tuned `-D` set and its 16.16 linear resample. **Prince of Persia plays digitised sound; Wolf3D plays BOTH.** Cost: **6 pager frames** and ~5.9% of wall for Wolf3D's music, 10.4-13.8% worst case. `X86_OPL_FM=0` returns every byte. ADPCM still emits silence.
 4. ~~**Epic Pinball's `0F A0` PUSH FS wall**~~ — PUSH/POP FS,GS and LSS/LFS/LGS
-   are in (`e70db05`). It is past its EXEC wall, reaches mode 13h, programs the
+   are in (`5834864`). It is past its EXEC wall, reaches mode 13h, programs the
    mixer and 22,050 Hz. **Where it stops NOW is unmeasured — measurable again (tier 2 is back).**
 5. ~~**The game port**~~ — `0x200`/`0x201` modelled as "no joystick present"
-   (`9cb3e90`). Wolf3D's 2.35 M `IN 0x201` reads are answered; the frame-cost
+   (`a4bdea7`). Wolf3D's 2.35 M `IN 0x201` reads are answered; the frame-cost
    effect is unmeasured (tier 2 is back: measurable now).
 
 **Open, measured, sized:**
@@ -60,9 +60,9 @@ predicted.
 5. ~~**The HMA**~~ — real frames when A20 is open, alias when masked, and the pager may not write those entries even to unmap. Unblocked **two** titles.
 6. ~~**Protected mode: the descriptor walk**~~ — EXERCISED: Dark Forces and Mortal Kombat both reach `CR0=1` with `CS=0x0070`, a real GDT selector (base `0xA900`, not `sel<<4`). **They get there by `LMSW`, not `MOV CR0`** — an extender must also run on a 286 — which is why this sat unexercised so long. Real mode pays NOTHING, proven by disassembly diff.
 7. ~~**Protected-mode IDT gate dispatch and same-privilege `IRET`**~~ — built
-   (`3688f69`, `e6789b2`); the instruction both titles stopped on is delivered.
+   (`45c1710`, `cb8a41a`); the instruction both titles stopped on is delivered.
 8. ~~**Descriptor inspection**~~ — group 6 complete, `0F 02`/`03`/`06`
-   (`LAR`/`LSL`/`CLTS`), `STR`/`LTR` with NO task switch (`bc265f5`). Demand was
+   (`LAR`/`LSL`/`CLTS`), `STR`/`LTR` with NO task switch (`b92c274`). Demand was
    measured statically: 58 `LAR`, 28 `LSL`, 5 `CLTS`, 5 `STR`, 2 `LTR`.
 9. ~~**Call gates, TSS stack switches, task switching, `IRET` across
    privilege**~~ — **DELETED, ~1,225 lines, not deferred.** `opcode_demand.py`

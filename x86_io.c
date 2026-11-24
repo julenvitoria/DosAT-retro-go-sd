@@ -2374,7 +2374,7 @@ unsigned x86_sb_render_mix(int16_t *dst, unsigned frames, unsigned sample_rate,
            played, and a DMA half shorter than the lead (Dune II's intro
            voices) was read before its refill -- stale data, the crackle that
            replaced the narrator (owner, 2026-11-04). */
-        /* 2.5 halves for single-cycle (was 1.5, 7e44bd7): the owner's MI2
+        /* 2.5 halves for single-cycle (was 1.5, dc73554): the owner's MI2
            talkie recording of 2026-11-04 still had 10-16 ms holes inside
            words (11.6, 15.3, 34.1 s), i.e. the guest's next block came more
            than the half-half margin late -- typically behind a MONSTER.SOU

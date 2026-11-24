@@ -565,7 +565,7 @@ defaults to 0, so there is no conflict today.
 Every number here is tier 3 (console, overclock 0). The tools are in
 [`TOOLING.md`](../TOOLING.md), "Playing a title on the console".
 
-### 9a. Victims by reference AGE, not frame order (`d20f8ae`)
+### 9a. Victims by reference AGE, not frame order (`3ac683c`)
 
 `pg_hot` was a fault COUNT: +1 at a real fault, +1 per 5 s working-set window,
 halved by every clock sweep. Under a burst of evictions the sweep zeroed it for
@@ -582,7 +582,7 @@ still evicting two a second. `wolf3d-shoot.tl`, 30 s of play, 2+2: evictions
 53/51 -> 36/33, SD time 1,328/1,378 -> 1,077/973 ms, audio halves missed 37/38
 -> 27/25. The price is ~3,200 reinstall faults per 30 s.
 
-### 9b. A FILE page that did not change is not written again (`ec8281d`)
+### 9b. A FILE page that did not change is not written again (`0c519aa`)
 
 A FILE-tier page had no in-memory authority, so every eviction rewrote its
 4 KB (~12 ms). Its contents are hashed (32 bits, in the pager's table block:
@@ -608,7 +608,7 @@ RAM, not of CPU, and no rule in this section changes that. What would is the
 project's original design -- read-mostly pages backed by memory-mapped NOR,
 which needs no frame at all (`X86_NOR_SNAP` is compiled out today).
 
-### 9c. No SHRINK that cannot shrink (`9e139a7`)
+### 9c. No SHRINK that cannot shrink (`a0900b2`)
 
 The video side answers `X86_PG_POLICY_SHRINK` by returning the whole loan and
 borrowing again inside the reserve, and what comes back is ZEROED. Pressure is
@@ -617,7 +617,7 @@ while the loan already fitted the reserve that round trip lent the same frames
 on every tick and its only effect was to erase the EGA card's second piece.
 KEEN4 entering Border Village: 600 shrink signals in one level load and black
 bands where the game had drawn in between. Intermittent (it depends on where
-the window falls) and present in `e1c677c` too: four runs of nine.
+the window falls) and present in `5624ae8` too: four runs of nine.
 
 `x86_pager_policy_tick()` now holds unless `frame_count - donated_frames <
 reserve_eff`. After: shrink signals 1-2, evictions ~122 -> ~83, the level whole
