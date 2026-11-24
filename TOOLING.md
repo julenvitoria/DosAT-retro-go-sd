@@ -807,6 +807,29 @@ watchpoint on a completion flag into a clean snapshot of what a load produced.
 Caveat: a stop can repeat on the same access without advancing. Treat repeated
 identical hits as one event, not as several.
 
+### `hit_histogram.py` — which arm of a handler does the guest actually take
+
+```bash
+# GRP5 (FF) in Wolf3D gameplay: r1 is the ModRM, its reg field the sub-op
+python3 scripts/hit_histogram.py --retrogo --sd build/run/sd-wolf.img \
+    --timeline timelines/wolf3d-play.tl --after 27 --climb x86_modey_presents \
+    --at GRP5_DISPATCH_16 --field r1:3:3 \
+    --names INC,DEC,CALL,CALLF,JMP,JMPF,PUSH --site r10 --hits 2000
+```
+
+A hardware breakpoint on one interpreter address, one stop per execution, and a
+histogram of a register bit field read at each stop; `--site r10` also tallies
+the guest linear EIP (past the bytes already fetched), which names the guest
+instructions. `--after`/`--climb` arm it only once the workload is the one you
+mean. **gwemu only; counts, never timing.** 2,000 hits take ~30 s of host time.
+
+Three GDB-stub traps it works around (`scripts/common/watchpoint.py`): gwemu
+does not answer a single-step, so stepping off the breakpoint is a second
+breakpoint on `--next` (default `--at`+4, the next 32-bit Thumb instruction on
+the sampled path); `halt()` can leave a stale stop packet queued, which the next
+wait would return as a fake hit, so it is flushed with a plain query; and
+draining with a socket timeout instead breaks the stream for good.
+
 ### `trace_diff.py` — bisect our trace against a reference, automatically
 
 ```bash
@@ -1068,6 +1091,12 @@ A slot is closed by the NEXT dispatch, so the last instruction before each exit
 from the interpreter is uncounted (one per interp call). Profiling also slows
 the emulator, so anything timing-dependent in the guest is perturbed; that is
 noted, not corrected.
+
+**`FF` is split by sub-op in a profile build.** GRP5 is seven instructions in
+one byte, so one `FF` row averaged a PUSH with a far CALL. `L(GRP5_DISPATCH)`
+relabels the open slot to `0F F8`+n (MMX space this interpreter never
+implements) and the report names those rows `FF /0 INC Ev` .. `FF /6 PUSH Ev`;
+in such a build the `FF` row itself keeps only the register-form exits.
 
 ##### `--gate` — the check that says WHICH WORKLOAD was profiled
 

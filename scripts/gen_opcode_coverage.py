@@ -113,6 +113,11 @@ def parse_handlers(paths):
 
 
 def strip_comments(body):
+    # Profile-build instrumentation is not operand access: its LDR/STR are
+    # pointer bookkeeping (L(GRP5_DISPATCH)'s sub-op relabel), and counting them
+    # flagged a width review on a shipping handler that does not contain them.
+    body = re.sub(r"^#if X86_PROFILE\b.*?^#endif[^\n]*", " ", body,
+                  flags=re.S | re.M)
     body = re.sub(r"/\*.*?\*/", " ", body, flags=re.S)
     body = re.sub(r"@.*", " ", body)
     body = re.sub(r"//.*", " ", body)

@@ -2537,6 +2537,21 @@ L(GRP5_MEM):
     LD_V R3, R2
 L(GRP5_DISPATCH):
     UBFX R12, R1, #3, #3
+#if X86_PROFILE
+    /* PROFILE BUILDS ONLY: charge this FF to its SUB-OP instead of to slot FF.
+       FF is seven instructions in one byte, and on the console its 278-cycle
+       mean was a mix nobody could act on (Wolf3D gameplay under gwemu: 67%
+       PUSH m16, 21% CALL FAR, 8% INC, 3% DEC -- scripts/hit_histogram.py).
+       The slot this dispatch opened is relabelled to 0F F8+n, which is MMX
+       space this interpreter never implements, so it cannot collide with a
+       real 0F opcode; profile_opcodes.py names them "FF /n". R4/R5 are dead
+       here on every arm. */
+    MOVW R4, #:lower16:x86_profile_ptr
+    MOVT R4, #:upper16:x86_profile_ptr
+    LDR R4, [R4]
+    ADD.W R5, R12, #(256 + 0xF8)
+    STR R5, [R4]
+#endif
     CMP R12, #0
     BEQ.N L(GRP5_INC)
     CMP R12, #1

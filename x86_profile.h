@@ -28,6 +28,9 @@
  *       [2] count      [3] reserved
  *
  * Slots 0-255 are the one-byte opcodes, 256-511 the 0F two-byte space, and
+ * (exception) 0F F8-FE hold GRP5 split by sub-op -- FF /0../6 -- because a
+ * single FF slot averages a 30-cycle PUSH with a far CALL; see L(GRP5_DISPATCH).
+ * Then
  * slot 512 is HOST: everything outside the interpreter (the frame loop, the
  * blit, HLE work between two calls into x86_cpu_interp_asm). The interpreter
  * prologue opens slot 512, so the first dispatch of each entry charges the

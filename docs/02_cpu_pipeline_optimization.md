@@ -157,7 +157,7 @@ weights above were menus under gwemu; these are gameplay cycles:
 | `AB` REP STOSW | 13.2% -- 20.6 k x 10,518 cyc, the hook once per element |
 | `8B` + `8A` + `89` | 17.4% at 66 cyc |
 | ALU r/m (01-3B) | 8.7% at 83 cyc; GRP1 imm 5.1%; GRP3 3.5% |
-| `FF` GRP5 | 4.0% at **278 cyc** each (238 k) -- UNEXPLAINED, `E8` is 30 |
+| `FF` GRP5 | 4.0% at **278 cyc** each (238 k) -- a MIX, see "FF, diagnosed" below |
 | `EC` IN AL,DX | 3.7% at **372 cyc** each, 11.5 k/s -- port not identified |
 | short Jcc | 2.1%; segment prefixes 13.7% of dispatches, 0.3% of cycles |
 
@@ -167,3 +167,34 @@ memory (the asm stub's six-register save and the plane write itself), `REP
 STOSW` still re-enters the handler per element (B2 proper: one call per run),
 and `FF`/`EC` have not been looked at. FM music is a separate 25% of wall
 (`docs/03` 4g, `[sblaster] oplrate`). JSON: `build/artifacts/day2-profile-wolf3d-play.json`.
+
+### `FF`, diagnosed (2026-11-24) -- what the 278 cycles are an average OF
+
+**Tier 2 counts** (`scripts/hit_histogram.py` on `GRP5_DISPATCH_16`, 2,000
+consecutive hits in WOLF3D gameplay, `x86_modey_presents` climbing):
+
+| sub-op | share | where (guest) |
+|---|---|---|
+| `/6` PUSH m16 | **67.1%** | four `push word [mem]` per wall column in the height calculation at lin `F4FD`-`F52D` (Borland C pushing two longs for `FixedByFrac`) |
+| `/3` CALL FAR m16:16 | **21.2%** | `call far [bp+0]` in `ScalePost` (lin `F5C5`), one per wall post, into a compiled scaler |
+| `/0` INC, `/1` DEC | 8.1%, 3.2% | scattered |
+| `/4` JMP | 0.4% | |
+
+**Tier 0, host instructions per execution** (disassembly, 16-bit pass, dispatch
+included): PUSH m16 ~85, CALL FAR ~138, INC m16 ~70 -- a weighted ~95. The
+handler's own share of that, for every arm: a SEVEN-WAY compare chain on the
+sub-op (PUSH is the last arm, 14 instructions), and for CALL FAR the far
+pointer's offset folded and loaded TWICE (`GRP5_MEM` already did it), two
+separate `PUSH_V` folds for CS and IP, and a `BL` into the general `SET_SREG`.
+
+**What does NOT close:** `E8` runs ~47 host instructions in 30 cycles; ~95 at
+that rate is ~60, not 278. The rest is charged to `FF` but is not visibly its
+code -- the profiler closes a slot at the NEXT dispatch, after that dispatch's
+fold and `.code_reloc`, so the next instruction's fetch (for CALL FAR, the
+first byte of a scaler that is a different block of guest memory every post)
+lands in this row; or D-cache misses; or mispredicts on the compare chain.
+**Tier 0/2 cannot separate these.** `X86_PROFILE=1` now splits `FF` by sub-op
+(rows `FF /0`..`FF /6`): one console run says which arm holds the cycles, and
+that decides the change -- a sub-op jump table (all arms), a CALL FAR without
+the double fetch and with one 4-byte push (the 21%), or nothing in `FF` at all
+if the cost is the scaler fetch.
