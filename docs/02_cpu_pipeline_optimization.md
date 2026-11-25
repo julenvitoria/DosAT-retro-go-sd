@@ -102,7 +102,7 @@ and KEEN4 10.9 M of startup/intro.
 | operand fold + seam check | 7 | already minimal |
 | flags after an ALU op | 16-17 | `MRS` + 5 serial `BFI` on R11, PF always computed; 96 sites |
 | ALU sub-op select | 2 | second shared indirect branch (`TBH`) |
-| `Jcc` condition (before `0996688`) | 13 (`JZ`) .. 37 (`JLE`) | `EVAL_COND` compare chain |
+| `Jcc` condition (before `dc35080`) | 13 (`JZ`) .. 37 (`JLE`) | `EVAL_COND` compare chain |
 | register index | 3 per operand | `AND`/`LSL #2`/`ADD #8`; 90 sites |
 
 Totals with dispatch: `MOV r,r` 34, `MOV ax,[bp+6]` 70, `MOV [bp+6],ax` 74,
@@ -126,7 +126,7 @@ This is restructuring the C, not the rejected "planar_store in assembly".
 
 | # | change | est. saving | ITCM | state |
 |---|---|---|---|---|
-| A1 | dedicated short `Jcc` for 72-77, 7C-7F | 15-35 cyc per Jcc | +424 B | DONE `0996688`. Tier 3: 11.62 -> 12.03 fps (+3.5%); dedicated Jcc 18 cyc, generic 77 |
+| A1 | dedicated short `Jcc` for 72-77, 7C-7F | 15-35 cyc per Jcc | +424 B | DONE `dc35080`. Tier 3: 11.62 -> 12.03 fps (+3.5%); dedicated Jcc 18 cyc, generic 77 |
 | A2 | register index in 1 insn + narrow encodings in hot handlers | 1-2 cyc/insn | -700 B | next |
 | A3 | table-driven 16-bit ModRM (24 straight-line entries) | 10-18 cyc per memory operand | +500 B | |
 | B1 | planar hook: no veneers, leaf entry, section anchors | 171 -> 80-100 cyc, up to ~10% of wall | +144 B | DONE (with B2a). Tier 3: `88` 209 -> 152 cyc; alone +5% ips, fps flat |
@@ -142,7 +142,7 @@ Considered and dropped before building: skipping the VGA check in
 bodies). If ITCM runs out, `cga_mode4_blit` (1,508 B, per frame) leaves first,
 then `font8x8` (2,048 B). **To measure a step:** `guest_ips_achieved` and
 `x86_modey_presents`/s over `timelines/wolf3d-hw.tl`, oc level 0, base core
-`5699d99` against the step's commit. A step that gains nothing measurable is
+`7ebc85d` against the step's commit. A step that gains nothing measurable is
 reverted and listed under REJECTED in `CLAUDE.md` with its number.
 
 ### Tier 3 profile of WOLF3D GAMEPLAY (2026-11-20) -- it reorders the plan
@@ -157,7 +157,7 @@ weights above were menus under gwemu; these are gameplay cycles:
 | `AB` REP STOSW | 13.2% -- 20.6 k x 10,518 cyc, the hook once per element |
 | `8B` + `8A` + `89` | 17.4% at 66 cyc |
 | ALU r/m (01-3B) | 8.7% at 83 cyc; GRP1 imm 5.1%; GRP3 3.5% |
-| `FF` GRP5 | 4.0% at **278 cyc** each (238 k) -- UNEXPLAINED, `E8` is 30 |
+| `FF` GRP5 | 4.0% at **278 cyc** each (238 k) -- a MIX, see "FF, diagnosed" below |
 | `EC` IN AL,DX | 3.7% at **372 cyc** each, 11.5 k/s -- port not identified |
 | short Jcc | 2.1%; segment prefixes 13.7% of dispatches, 0.3% of cycles |
 
@@ -167,3 +167,50 @@ memory (the asm stub's six-register save and the plane write itself), `REP
 STOSW` still re-enters the handler per element (B2 proper: one call per run),
 and `FF`/`EC` have not been looked at. FM music is a separate 25% of wall
 (`docs/03` 4g, `[sblaster] oplrate`). JSON: `build/artifacts/day2-profile-wolf3d-play.json`.
+
+### `FF`, diagnosed (2026-11-24) -- what the 278 cycles are an average OF
+
+**Tier 2 counts** (`scripts/hit_histogram.py` on `GRP5_DISPATCH_16`, 2,000
+consecutive hits in WOLF3D gameplay, `x86_modey_presents` climbing):
+
+| sub-op | share | where (guest) |
+|---|---|---|
+| `/6` PUSH m16 | **67.1%** | four `push word [mem]` per wall column in the height calculation at lin `F4FD`-`F52D` (Borland C pushing two longs for `FixedByFrac`) |
+| `/3` CALL FAR m16:16 | **21.2%** | `call far [bp+0]` in `ScalePost` (lin `F5C5`), one per wall post, into a compiled scaler |
+| `/0` INC, `/1` DEC | 8.1%, 3.2% | scattered |
+| `/4` JMP | 0.4% | |
+
+**Tier 0, host instructions per execution** (disassembly, 16-bit pass, dispatch
+included): PUSH m16 ~85, CALL FAR ~138, INC m16 ~70 -- a weighted ~95. The
+handler's own share of that, for every arm: a SEVEN-WAY compare chain on the
+sub-op (PUSH is the last arm, 14 instructions), and for CALL FAR the far
+pointer's offset folded and loaded TWICE (`GRP5_MEM` already did it), two
+separate `PUSH_V` folds for CS and IP, and a `BL` into the general `SET_SREG`.
+
+**What does NOT close:** `E8` runs ~47 host instructions in 30 cycles; ~95 at
+that rate is ~60, not 278. The rest is charged to `FF` but is not visibly its
+code -- the profiler closes a slot at the NEXT dispatch, after that dispatch's
+fold and `.code_reloc`, so the next instruction's fetch (for CALL FAR, the
+first byte of a scaler that is a different block of guest memory every post)
+lands in this row; or D-cache misses; or mispredicts on the compare chain.
+**Tier 0/2 cannot separate these.** `X86_PROFILE=1` now splits `FF` by sub-op
+(rows `FF /0`..`FF /6`): one console run says which arm holds the cycles, and
+that decides the change -- a sub-op jump table (all arms), a CALL FAR without
+the double fetch and with one 4-byte push (the 21%), or nothing in `FF` at all
+if the cost is the scaler fetch.
+
+**Built on 2026-11-24 (`f6bc5dc`, tier 1 green, WOLF3D 0.000%, tier 3
+UNMEASURED):** the sub-op is one `TBB` into an 8-entry table (PUSH was the last
+of seven compares), and the far CALL/JMP takes the offset `GRP5_MEM` already
+loaded instead of folding and loading it again. ITCM -256 B. A new case per
+GRP5 arm through memory; swapping two table entries fails two of them.
+
+### What is left, and what each one needs from the owner (2026-11-24)
+
+| lever | est. | blocker |
+|---|---|---|
+| table-driven 16-bit ModRM (A3) | ~10 host insns per memory operand | ~600-800 B of ITCM; 352 B are free. Cold handlers (protected-mode group ~2.5 KB, `PUSHA`/`POPA` 1.8 KB, 0F bit/shift 1.7 KB, `cga_mode4_blit` 1.5 KB) cannot simply leave ITCM: from RAM_EMU no branch reaches `.fetch_decode_loop`, so every exit needs a trampoline, and RAM_EMU growth costs pager frames |
+| register file at offset 0 of `X86CPUState` (A2) | 2 host insns per register operand, ITCM ~-700 B | changes the layout save states are written in: old saves would not load |
+| seam flush through the PIT slow path (A5) | 2 host insns per instruction | interacts with guest-time accounting and the `MOV SS` interrupt shadow; not without a console to check it |
+| flag macros rescheduled for dual issue (A4) | a few cycles per ALU op | instruction count unchanged; whether the M7 pairs the new order is a tier-3 question |
+| `REP STOS` fill of a whole run in one pass | ~1-2% of wall in Wolf3D | none; the batch already exists (`998e7fb`), each element still calls the store |

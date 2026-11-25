@@ -525,6 +525,7 @@ loop and say nothing. Read `x86_frame_phase` instead.
 | `x86_opl_t1_gap` | **the AdLib probe's delay, in PIT ticks** -- the longest wait ever observed for OPL timer 1, read against the 96 that preset FFh needs. It is what separates "the card refused" from "the guest's wait was too short for our clock", and it is what named the Sound Blaster non-detection (`docs/03` §4e). `x86_io_isa_ticks` beside it is the ISA bus time charged to FM-port accesses; 0 means the negative control is built |
 | `x86_io_log` | Every port access, **coalesced by (direction, port)** into 16 runs (32 until 2026-10-24), decoded by **`probe.py --io-log`**. A diagnostic build can lengthen it (`make -f Makefile.core pack EXTRA_CFLAGS=-DX86_IO_LOG_SLOTS=512`); the decoder reads the length from `x86_io_log_slots`. Coalescing is what makes it useful: a mode-13h palette upload is 768 consecutive writes to 0x3C9 and would flush every other port out of a raw ring. What it shows is the SHAPE of a guest's hardware conversation -- which register files it programs, in what order -- and that named WOLF3D's wall in one run: `OUT 3D4,0F / OUT 3D5,66 / IN 3D5` reading back 0xFF, i.e. a CRTC write-then-read-back probe against a register file that did not exist. It also caught the FIX overshooting -- answering the 0x3B4/0x3B5 mono alias too made the guest conclude MONO and poll 0x3BA 32,000 times |
 | `x86_vga_planar_stores` / `_cls_plane` / `_cls_copy` / `_cls_general` | Guest stores that took the planar hook, split by WRITE CLASS -- the class is decided at `OUT` time, not per store. `_plane` is the CPU byte straight into the enabled planes (write mode 0, no Set/Reset, Bit Mask 0xFF, no rotate, no ALU); `_copy` is the write-mode-1 latched page copy; `_general` is everything else and is the only class still paying the full pipeline. **The MIX is the number that says whether a fast path is earning its risk**, and `_general` is the one to watch: WOLF3D in Mode Y gameplay reads 0 there, so the fast paths cover its whole frame. The class counters count PER BYTE while `_stores` counts per store, so a guest doing word stores makes them exceed it -- that is not a discrepancy. Read the set with `probe.py --watch planar` |
+| `x86_vga_planar_leaf_checked` / `_leaf_bad` / `_fill_runs` / `_fill_elems` | **diagnostic build only** (`EXTRA_CFLAGS=-DX86_PLANAR_LEAF_CHECK=1`): every cell the Mode Y store leaf and the `REP STOS` run fill resolve is compared with `vga_cell()`, the reference for where a plane byte lives. `_leaf_bad` must stay 0; `_fill_runs`/`_fill_elems` say the fill actually ran. `-DX86_PLANAR_FILL_NEGCTL=1` turns the fill off (back to one store call per element) for an A/B |
 | `x86_disk_reads` / `x86_disk_backend_reads` | guest-side `disk_read()` calls and how many of them reached the SD card. The RATIO is the sector cache's whole point, it is exact under gwemu, and it is the number to quote — TOPBENCH boots on 115 / 7 |
 | `vga_aperture_ok` / `x86_vga13_ok` | is the mode 13h aperture (64 KB, bonus pool) and its palette block backed? A 0 in `x86_vga13_ok` means a guest asking for 13h is REFUSED and logged (event tag 5) rather than drawing into the open-bus filler -- which is the right behaviour, but it is a whole mode silently missing |
 | `x86_vga_dac_writes` | DAC bytes the guest has streamed through 0x3C9. **0 while a screen is black says the guest never got as far as the palette**, which separates "13h is broken" from "the guest never reached video" -- the distinction WOLF3D turned on |
@@ -807,6 +808,29 @@ watchpoint on a completion flag into a clean snapshot of what a load produced.
 Caveat: a stop can repeat on the same access without advancing. Treat repeated
 identical hits as one event, not as several.
 
+### `hit_histogram.py` — which arm of a handler does the guest actually take
+
+```bash
+# GRP5 (FF) in Wolf3D gameplay: r1 is the ModRM, its reg field the sub-op
+python3 scripts/hit_histogram.py --retrogo --sd build/run/sd-wolf.img \
+    --timeline timelines/wolf3d-play.tl --after 27 --climb x86_modey_presents \
+    --at GRP5_DISPATCH_16 --field r1:3:3 \
+    --names INC,DEC,CALL,CALLF,JMP,JMPF,PUSH --site r10 --hits 2000
+```
+
+A hardware breakpoint on one interpreter address, one stop per execution, and a
+histogram of a register bit field read at each stop; `--site r10` also tallies
+the guest linear EIP (past the bytes already fetched), which names the guest
+instructions. `--after`/`--climb` arm it only once the workload is the one you
+mean. **gwemu only; counts, never timing.** 2,000 hits take ~30 s of host time.
+
+Three GDB-stub traps it works around (`scripts/common/watchpoint.py`): gwemu
+does not answer a single-step, so stepping off the breakpoint is a second
+breakpoint on `--next` (default `--at`+4, the next 32-bit Thumb instruction on
+the sampled path); `halt()` can leave a stale stop packet queued, which the next
+wait would return as a fake hit, so it is flushed with a plain query; and
+draining with a socket timeout instead breaks the stream for good.
+
 ### `trace_diff.py` — bisect our trace against a reference, automatically
 
 ```bash
@@ -1068,6 +1092,12 @@ A slot is closed by the NEXT dispatch, so the last instruction before each exit
 from the interpreter is uncounted (one per interp call). Profiling also slows
 the emulator, so anything timing-dependent in the guest is perturbed; that is
 noted, not corrected.
+
+**`FF` is split by sub-op in a profile build.** GRP5 is seven instructions in
+one byte, so one `FF` row averaged a PUSH with a far CALL. `L(GRP5_DISPATCH)`
+relabels the open slot to `0F F8`+n (MMX space this interpreter never
+implements) and the report names those rows `FF /0 INC Ev` .. `FF /6 PUSH Ev`;
+in such a build the `FF` row itself keeps only the register-form exits.
 
 ##### `--gate` — the check that says WHICH WORKLOAD was profiled
 

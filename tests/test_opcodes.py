@@ -3310,6 +3310,92 @@ def run_test(args):
                 "mem_expected": [(0x2000C, bytes([0x04, 0x00, 0x00, 0x00]))],
                 "expected_eip": 1,
             },
+            # ---- every GRP5 arm through MEMORY, one case each --------------
+            # GRP5 dispatches on the ModRM reg field with a TBB table
+            # (L(GRP5_TBB)); a wrong table entry sends a sub-op to its
+            # neighbour's arm, so each arm gets a case whose result no other
+            # arm could produce.
+            {
+                "name": "GRP5 /0: INC word [0x0300] sets OF/SF, keeps CF",
+                # FF 06 00 03 ; HLT -- 0x7FFF + 1 = 0x8000
+                "code": bytes([0xFF, 0x06, 0x00, 0x03, 0xF4]),
+                "mode": 16,
+                "ram_setup": [(0x300, bytes([0xFF, 0x7F]))],
+                "regs_initial": {},
+                "regs_expected": {},
+                "eflags_initial": 0x001,
+                "mem_expected": [(0x300, bytes([0x00, 0x80]))],
+                "flags_expected": {"OF": 1, "SF": 1, "ZF": 0, "CF": 1},
+                "expected_eip": 5,
+            },
+            {
+                "name": "GRP5 /1: DEC word [bx] reaches zero",
+                # FF 0F ; HLT -- BX = 0x0300 holds 0x0001
+                "code": bytes([0xFF, 0x0F, 0xF4]),
+                "mode": 16,
+                "ram_setup": [(0x300, bytes([0x01, 0x00]))],
+                "regs_initial": {3: 0x0300},
+                "regs_expected": {3: 0x0300},
+                "mem_expected": [(0x300, bytes([0x00, 0x00]))],
+                "flags_expected": {"ZF": 1, "SF": 0, "OF": 0},
+                "expected_eip": 3,
+            },
+            {
+                "name": "GRP5 /4: JMP near [0x0300] takes the offset stored there",
+                # FF 26 00 03 ; HLT (skipped) ... HLT at 8
+                "code": bytes([0xFF, 0x26, 0x00, 0x03, 0xF4, 0xF4, 0xF4,
+                               0xF4, 0xF4]),
+                "mode": 16,
+                "ram_setup": [(0x300, bytes([0x08, 0x00]))],
+                "regs_initial": {},
+                "regs_expected": {},
+                "expected_eip": 9,
+            },
+            {
+                "name": "GRP5 /6: PUSH word [0x0300] (the CalcHeight form)",
+                # FF 36 00 03 ; HLT
+                "code": bytes([0xFF, 0x36, 0x00, 0x03, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"SS": 0x20000},
+                "ram_setup": [(0x20000, bytes(0x20)),
+                              (0x300, bytes([0xCD, 0xAB]))],
+                "regs_initial": {4: 0x0010},
+                "regs_expected": {4: 0x000E},
+                "mem_expected": [(0x2000E, bytes([0xCD, 0xAB]))],
+                "expected_eip": 5,
+            },
+            {
+                "name": "GRP5 /7 through memory is #UD (exit), not a neighbour's arm",
+                # FF 3E 00 03 ; HLT
+                "code": bytes([0xFF, 0x3E, 0x00, 0x03, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"SS": 0x20000},
+                "ram_setup": [(0x20000, bytes(0x20)),
+                              (0x300, bytes([0x34, 0x12]))],
+                "regs_initial": {4: 0x0010},
+                "regs_expected": {4: 0x0010},
+                "mem_expected": [(0x300, bytes([0x34, 0x12]))],
+                "expected_exit_reason": 4,
+                "expected_eip": 4,
+            },
+            {
+                "name": "GRP5 /3: CALL FAR [bp+0] through SS (Wolf3D's ScalePost)",
+                # FF 5E 00 ; HLT. [bp] defaults to SS: the pointer at
+                # SS:0x0018 = 0x20018 is 0100:0004, whose target 0x1004 is a
+                # HLT. A DS-relative fetch would read 0x0018 and go elsewhere.
+                "code": bytes([0xFF, 0x5E, 0x00, 0xF4]),
+                "mode": 16,
+                "segs_initial": {"SS": 0x20000},
+                "ram_setup": [(0x20000, bytes(0x18) + bytes([0x04, 0x00,
+                                                             0x00, 0x01])),
+                              (0x18, bytes(4)),
+                              (0x1004, bytes([0xF4]))],
+                "regs_initial": {4: 0x0010, 5: 0x0018},
+                "regs_expected": {4: 0x000C},
+                # SP 0x10 -> push CS (0) at 0x0E -> push IP (3) at 0x0C
+                "mem_expected": [(0x2000C, bytes([0x03, 0x00, 0x00, 0x00]))],
+                "expected_eip": 5,
+            },
             {
                 "name": "FAR: JMP FAR m16:16 (FF /5) switches CS and leaves SP alone",
                 # FF 2E 00 03 = JMP FAR [0x0300]

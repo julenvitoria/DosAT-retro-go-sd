@@ -113,6 +113,11 @@ def parse_handlers(paths):
 
 
 def strip_comments(body):
+    # Profile-build instrumentation is not operand access: its LDR/STR are
+    # pointer bookkeeping (L(GRP5_DISPATCH)'s sub-op relabel), and counting them
+    # flagged a width review on a shipping handler that does not contain them.
+    body = re.sub(r"^#if X86_PROFILE\b.*?^#endif[^\n]*", " ", body,
+                  flags=re.S | re.M)
     body = re.sub(r"/\*.*?\*/", " ", body, flags=re.S)
     body = re.sub(r"@.*", " ", body)
     body = re.sub(r"//.*", " ", body)
@@ -239,9 +244,9 @@ def parse_group_chains(paths):
     """CMP/BEQ group dispatch chains -> {chain: {reg: target_label}}.
 
     Grp1 and Grp2 use an 8-entry TBH and cannot fall through, so they have no
-    chain here and every /reg is reachable by construction. Grp3/4/5 use a
+    chain here and every /reg is reachable by construction. Grp3/4 use a
     CMP/BEQ chain and anything unnamed falls to `.exit_loop` -- which is
-    exactly what this extracts.
+    exactly what this extracts. Grp5 uses a TBB whose #UD arm is `GRP5_UD`.
     """
     out = {}
     for path in paths:
@@ -252,6 +257,15 @@ def parse_group_chains(paths):
             for cmp_m in re.finditer(
                     r"CMP\s+R\d+,\s*#(\d+)\s*\n\s*BEQ[^\n]*L\((\w+)\)", body):
                 regs[int(cmp_m.group(1))] = cmp_m.group(2)
+            # A TBB on the sub-op (GRP5 since 2026-11-24): the table follows the
+            # dispatch label as `.byte (L(target) - L(table)) / 2`, one per
+            # /reg in order. An arm named *_UD is the #UD exit, i.e. absent.
+            if not regs and re.search(r"\bTBB\s+\[PC", body):
+                tail = src[m.end():m.end() + 1200]
+                arms = re.findall(
+                    r"\.byte\s+\(L\((\w+)\)\s*-\s*L\(\w+\)\)\s*/\s*2", tail)
+                regs = {i: t for i, t in enumerate(arms[:8])
+                        if not t.endswith("_UD")}
             if regs:
                 out[m.group("name")] = regs
     return out

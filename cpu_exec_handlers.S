@@ -2537,20 +2537,43 @@ L(GRP5_MEM):
     LD_V R3, R2
 L(GRP5_DISPATCH):
     UBFX R12, R1, #3, #3
-    CMP R12, #0
-    BEQ.N L(GRP5_INC)
-    CMP R12, #1
-    BEQ.N L(GRP5_DEC)
-    CMP R12, #2
-    BEQ.N L(GRP5_CALL)
-    CMP R12, #3
-    BEQ.W L(GRP5_CALLF)
-    CMP R12, #4
-    BEQ.W L(GRP5_JMP)
-    CMP R12, #5
-    BEQ.W L(GRP5_JMPF)
-    CMP R12, #6
-    BEQ.W L(GRP5_PUSH)
+#if X86_PROFILE
+    /* PROFILE BUILDS ONLY: charge this FF to its SUB-OP instead of to slot FF.
+       FF is seven instructions in one byte, and on the console its 278-cycle
+       mean was a mix nobody could act on (Wolf3D gameplay under gwemu: 67%
+       PUSH m16, 21% CALL FAR, 8% INC, 3% DEC -- scripts/hit_histogram.py).
+       The slot this dispatch opened is relabelled to 0F F8+n, which is MMX
+       space this interpreter never implements, so it cannot collide with a
+       real 0F opcode; profile_opcodes.py names them "FF /n". R4/R5 are dead
+       here on every arm. */
+    MOVW R4, #:lower16:x86_profile_ptr
+    MOVT R4, #:upper16:x86_profile_ptr
+    LDR R4, [R4]
+    ADD.W R5, R12, #(256 + 0xF8)
+    STR R5, [R4]
+#endif
+    /* One TBB on the sub-op, not a seven-way compare chain. The chain put
+       PUSH -- 67% of Wolf3D's FF, four `push word [mem]` per wall column --
+       behind six compares and as many branches the predictor had to learn
+       per call site. Far arms and /7 go through the three stubs below, which
+       keep every table offset forward and inside TBB's 510-byte reach. */
+    TBB [PC, R12]
+L(GRP5_TBB):
+    .byte (L(GRP5_INC) - L(GRP5_TBB)) / 2
+    .byte (L(GRP5_DEC) - L(GRP5_TBB)) / 2
+    .byte (L(GRP5_CALL) - L(GRP5_TBB)) / 2
+    .byte (L(GRP5_CALLF) - L(GRP5_TBB)) / 2
+    .byte (L(GRP5_JMP) - L(GRP5_TBB)) / 2
+    .byte (L(GRP5_JMPF) - L(GRP5_TBB)) / 2
+    .byte (L(GRP5_PUSH) - L(GRP5_TBB)) / 2
+    .byte (L(GRP5_UD) - L(GRP5_TBB)) / 2
+L(GRP5_CALLF):
+    MOV.W R0, #1
+    B.W L(GRP5_FAR_ENTRY)
+L(GRP5_JMPF):
+    MOV.W R0, #0
+    B.W L(GRP5_FAR_ENTRY)
+L(GRP5_UD):
     B.W .exit_loop
 /* INC/DEC Ev set the same five flags their r/m8 twins do, and set none
    before. CALL/JMP near indirect take an OFFSET in CS, not a linear address,
@@ -4444,12 +4467,12 @@ L(HYPERCALL_UD):
  * selector -- an arbitrary CS built out of the target address. LES/LDS
  * (L(LOAD_FAR_PTR)) already reads the pair this way; this now matches it. */
 L(GRP5_FAR_ENTRY):
-    SEAM_CHECK R3, R7
-    UBFX R3, R7, #12, #12
-    LDR.W R3, [R9, R3, LSL #2]
-    ADDS R3, R3, R7
-    MEM_TRAP_R R3
-    LD_V R4, R3                    @ new IP/EIP, operand-size wide
+    /* The OFFSET is already in R3: GRP5_MEM folded R7 and loaded it with LD_V
+       (seam-checked, read-trapped) before dispatching, and the register form
+       never gets here (it is #UD above). Folding and loading it again was nine
+       instructions on every far CALL in ScalePost. Only the selector, OPSZ
+       further on, still has to be fetched. */
+    MOV R4, R3                     @ new IP/EIP, operand-size wide
     ADD.W R7, R7, #OPSZ
     SEAM_CHECK R3, R7
     UBFX R3, R7, #12, #12
@@ -4474,9 +4497,3 @@ L(GRP5_FAR_SET):
     ADD.W R10, R4, R3
     B.W .fetch_decode_loop
 
-L(GRP5_CALLF):
-    MOV.W R0, #1
-    B.W L(GRP5_FAR_ENTRY)
-L(GRP5_JMPF):
-    MOV.W R0, #0
-    B.W L(GRP5_FAR_ENTRY)

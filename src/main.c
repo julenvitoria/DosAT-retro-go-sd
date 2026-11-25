@@ -451,7 +451,7 @@ volatile uint32_t guest_exec_ms    = 0;  /* host ms spent RUNNING the guest    *
  *
  * EVERY OTHER FRAME STILL REGULATES ON guest_exec_ms, SD TIME INCLUDED, and
  * that is measured, not assumed. Subtracting the SD time from every frame
- * (237bbe5) cut the load 15.2 -> 9.3 s but made play WORSE while a sound
+ * (b7bbc93) cut the load 15.2 -> 9.3 s but made play WORSE while a sound
  * played: the owner felt it at once, and 0.1 s sampling agreed -- median
  * 12.9 -> 11.3 fps, worst second 8.4 -> 5.9. A sound page is a few ms of SD
  * in many consecutive frames; with the SD time excluded the slice filled the
@@ -1386,7 +1386,7 @@ void app_main(uint8_t load_state, uint8_t start_paused, int8_t save_slot)
            World lost its FIFO when the ring came first, and Dune II (xms on,
            so one more fopen) lost the ring, which mutes every transfer and
            took its intro voices (device, 2026-11-04). So 12 KB stays free.
-           That costs WHOLE WINDOWS, not a halving: a5ddab9 halved 64 -> 32 KB,
+           That costs WHOLE WINDOWS, not a halving: 598b92c halved 64 -> 32 KB,
            which x86_disk_cache_init() then refused outright (it took exactly
            four windows), so the device most likely ran with NO cache -- and
            the talkies' voices got their clicks back. A zero answer from an

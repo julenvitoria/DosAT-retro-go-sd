@@ -96,7 +96,7 @@ only). That leaves roughly **185 one-byte opcodes believed correct**.
 | One-byte slots dispatching to `.exit_loop` | **1 / 256** |
 | Two-byte (0F) slots with a handler | **64 / 256** |
 | Two-byte slots dispatching to `.exit_loop` | **192 / 256** |
-| Implemented slots carrying at least one mechanical warning | **178** |
+| Implemented slots carrying at least one mechanical warning | **177** |
 
 Every row below is DERIVED. `status` is `reached` or `.exit_loop`, taken from
 the dispatch table. `mode` is `OP` (dual-emitted) or `OP_AGNOSTIC`, taken from the
@@ -375,7 +375,7 @@ Warning legend:
 | FB | reached | `.op_sti_FB` | AGN | - | REVIEW: AGN body mixes width primitives with 6 bare word op(s), no flag macro reachable |
 | FC | reached | `.op_cld_FC` | AGN | - | no flag macro reachable |
 | FD | reached | `.op_std_FD` | AGN | ARITH, INCDEC, LOGIC | REVIEW: AGN body mixes width primitives with 19 bare word op(s) |
-| FE | reached | `.op_grp4_FE` | AGN | INCDEC | REVIEW: AGN body mixes width primitives with 3 bare word op(s) |
+| FE | reached | `.op_grp4_FE` | AGN | INCDEC | - |
 | FF | reached | `.op_grp5_FF` | dual | INCDEC | - |
 
 ### Two-byte (0F) opcodes -- all 256 (generated)
@@ -393,7 +393,7 @@ Warning legend:
 | 0F 08 | **`.exit_loop`** | `.exit_loop` | - | - | - |
 | 0F 09 | **`.exit_loop`** | `.exit_loop` | - | - | - |
 | 0F 0A | **`.exit_loop`** | `.exit_loop` | - | - | - |
-| 0F 0B | reached | `.op_hypercall_0F0B` | AGN | - | REVIEW: AGN body mixes width primitives with 64 bare word op(s) |
+| 0F 0B | reached | `.op_hypercall_0F0B` | AGN | - | REVIEW: AGN body mixes width primitives with 63 bare word op(s) |
 | 0F 0C | **`.exit_loop`** | `.exit_loop` | - | - | - |
 | 0F 0D | **`.exit_loop`** | `.exit_loop` | - | - | - |
 | 0F 0E | **`.exit_loop`** | `.exit_loop` | - | - | - |

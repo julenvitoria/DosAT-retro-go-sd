@@ -1942,15 +1942,59 @@ __attribute__((noinline)) PLANAR_HOT static void planar_store_body(uint32_t off,
 #endif
 #if X86_PLANAR_LEAF_CHECK
 volatile uint32_t x86_vga_planar_leaf_checked, x86_vga_planar_leaf_bad;
+/* runs and elements the REP STOS fill took (planar_fill_run) */
+volatile uint32_t x86_vga_planar_fill_runs, x86_vga_planar_fill_elems;
 #endif
 #if !X86_VPROF && !X86_MODEY_PAGE_NEGCTL
 typedef uint32_t __attribute__((may_alias)) planar_u32a;
+
+/*
+ * WHERE A RUN OF `n` CONSECUTIVE WINDOW OFFSETS LIVES, in Mode Y, when it is one
+ * region: the four interleaved plane bytes of offset a+i are then p + 4*i. NULL
+ * when the run leaves its region part-way (the window's end, a page's end or
+ * tail, the cache's end) or lands somewhere with no storage -- the caller then
+ * takes the general body byte by byte. Shared by the store leaf (n = the store's
+ * size) and the REP STOS run fill (n = the whole run), so the two cannot
+ * disagree about the cell layout.
+ */
+__attribute__((always_inline)) static inline uint8_t *modey_run_cells(uint32_t a, uint32_t n)
+{
+    uint8_t *base = x86_vga_planar_aperture;
+    const uint32_t last = a + n - 1u;
+
+    if (a >= X86_MODEY_CACHE) {
+        if (last >= X86_VGA_APERTURE_BYTES)
+            return 0;                   /* wraps the 64 KB window */
+        a -= X86_MODEY_CACHE;
+        if (a + n > modey_cache_offs)
+            return 0;
+        return modey_cache + 4u * a;
+    } else {
+        const uint32_t pg = x86_vga_modey_page;
+        if (last >= X86_MODEY_CACHE)
+            return 0;                   /* runs into the cache region */
+        if (a >= pg) {
+            uint32_t pi = 0;
+            a -= pg;
+            if (a >= pg) { a -= pg; pi = 1; }
+            else if (a + n > pg)
+                return 0;               /* page 1 into page 2 */
+            base = modey_pgstore[pi];
+            if (!base)
+                return 0;               /* aliased over page 0: the loud path */
+        } else if (a + n > pg) {
+            return 0;                   /* page 0 into page 1 */
+        }
+        if (a + n > X86_MODEY_PLANE)
+            return 0;                   /* the page tail has no storage */
+        return base + 4u * a;
+    }
+}
 
 __attribute__((always_inline)) static inline int planar_store_leaf(uint32_t off, uint32_t val, uint32_t size)
 {
     uint8_t *base = x86_vga_planar_aperture;
     uint32_t a = off & (X86_VGA_APERTURE_BYTES - 1u);
-    const uint32_t last = a + size - 1u;
     uint8_t *p;
 
     /* THE 0Dh LEAF (2026-11-21): one byte, into a page that has storage, in
@@ -2021,33 +2065,9 @@ __attribute__((always_inline)) static inline int planar_store_leaf(uint32_t off,
        resolution and `size` stores. A store that leaves its region part-way
        (the window's end, a page's end or tail, the cache's end) is refused
        here and the general body takes it byte by byte, as before. */
-    if (a >= X86_MODEY_CACHE) {
-        if (last >= X86_VGA_APERTURE_BYTES)
-            return 0;                   /* wraps the 64 KB window */
-        a -= X86_MODEY_CACHE;
-        if (a + size > modey_cache_offs)
-            return 0;
-        p = modey_cache + 4u * a;
-    } else {
-        const uint32_t pg = x86_vga_modey_page;
-        if (last >= X86_MODEY_CACHE)
-            return 0;                   /* runs into the cache region */
-        if (a >= pg) {
-            uint32_t n = 0;
-            a -= pg;
-            if (a >= pg) { a -= pg; n = 1; }
-            else if (a + size > pg)
-                return 0;               /* page 1 into page 2 */
-            base = modey_pgstore[n];
-            if (!base)
-                return 0;               /* aliased over page 0: the loud path */
-        } else if (a + size > pg) {
-            return 0;                   /* page 0 into page 1 */
-        }
-        if (a + size > X86_MODEY_PLANE)
-            return 0;                   /* the page tail has no storage */
-        p = base + 4u * a;
-    }
+    p = modey_run_cells(a, size);
+    if (!p)
+        return 0;
 
 #if X86_PLANAR_LEAF_CHECK
     /* DIAGNOSTIC BUILD ONLY (EXTRA_CFLAGS=-DX86_PLANAR_LEAF_CHECK=1): every
@@ -2124,6 +2144,63 @@ PLANAR_HOT void x86_vga_planar_store(uint32_t off, uint32_t val, uint32_t size)
  * we return; that commutes with the advance made here.
  */
 
+#ifndef X86_PLANAR_FILL_NEGCTL
+#define X86_PLANAR_FILL_NEGCTL 0
+#endif
+#if !X86_VPROF && !X86_MODEY_PAGE_NEGCTL
+/*
+ * k elements of `size` bytes, all the same value, from window offset `a`: the
+ * rest of a REP STOS run in one pass, when the Map Mask enables every plane. Exactly what k calls of the store leaf
+ * would have done -- same class test, same cells (modey_run_cells over the
+ * whole run instead of per element), same counters -- or 0 having touched
+ * nothing, when any element would not have been the leaf's.
+ *
+ * Wolfenstein 3-D clears its ceiling and floor with `rep stosw` every frame,
+ * ~29 words a run with the Map Mask at 0x0F; each of those words was a call,
+ * a re-test of the mode and class, a region resolution and three counter
+ * updates for two 4-byte stores.
+ */
+PLANAR_HOT __attribute__((noinline)) static int planar_fill_run(uint32_t a, uint32_t val, uint32_t size, uint32_t k)
+{
+    const uint32_t n = k * size;
+    uint8_t *p;
+    uint32_t i;
+
+    /* Every plane only (Map Mask 0x0F) -- the clear Wolf3D runs; a partial
+       mask is left to the per-element leaf, which costs ITCM nothing extra. */
+    if (!x86_vga_modey_armed || planar_class != PL_PLANE || x86_vga_modey_flat
+        || planar_plane_mask32 != 0xFFFFFFFFu || !x86_vga_planar_aperture || !k)
+        return 0;
+    p = modey_run_cells(a, n);
+    if (!p)
+        return 0;
+#if X86_PLANAR_LEAF_CHECK
+    x86_vga_planar_fill_runs++;
+    x86_vga_planar_fill_elems += k;
+    for (i = 0; i < n; i++) {
+        x86_vga_planar_leaf_checked++;
+        if (vga_cell((a + i) & (X86_VGA_APERTURE_BYTES - 1u)) != p + 4u * i)
+            x86_vga_planar_leaf_bad++;
+    }
+#endif
+    x86_vga_planar_stores += k;
+    x86_vga_planar_cls_plane += n;
+    x86_vga_planar_cls_plane1 += n;
+    {
+        /* every plane: a cell is one aligned word of the byte, four times */
+        planar_u32a *q = (planar_u32a *)(void *)p;
+        uint32_t w[4];
+
+        for (i = 0; i < size; i++)
+            w[i] = ((val >> (8u * i)) & 0xFFu) * 0x01010101u;
+        while (k--)
+            for (i = 0; i < size; i++)
+                *q++ = w[i];
+    }
+    return 1;
+}
+#endif
+
 void x86_vga_planar_stos(uint32_t off, uint32_t val, uint32_t size, uint32_t flags)
 {
     X86CPUState *cpu = cpu_state_ptr;
@@ -2150,10 +2227,18 @@ void x86_vga_planar_stos(uint32_t off, uint32_t val, uint32_t size, uint32_t fla
             return;
         if (k > lim - 1u)
             k = lim - 1u;
-        /* THE SAME HOOK, ONCE PER ELEMENT: whatever mode and write class is
-           armed, each element is the store it would have been. */
-        for (i = 1; i <= k; i++)
-            x86_vga_planar_store(off + i * size, val, size);
+        /* THE WHOLE RUN AT ONCE when it is the store leaf's case for every
+           element -- Mode Y, the CPU byte into the enabled planes, one region
+           with storage: k elements are k*size consecutive cells, written in
+           one pass (planar_fill_run). Otherwise THE SAME HOOK, ONCE PER
+           ELEMENT: whatever mode and write class is armed, each element is the
+           store it would have been. */
+#if !X86_VPROF && !X86_MODEY_PAGE_NEGCTL && !X86_PLANAR_FILL_NEGCTL
+        if (!planar_fill_run((off + size) & (X86_VGA_APERTURE_BYTES - 1u),
+                             val, size, k))
+#endif
+            for (i = 1; i <= k; i++)
+                x86_vga_planar_store(off + i * size, val, size);
         cpu->regs[1] = rem - k;
         cpu->regs[7] = edi + k * size;
         cpu->rep_batch -= k;

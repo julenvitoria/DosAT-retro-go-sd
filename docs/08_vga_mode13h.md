@@ -475,7 +475,7 @@ and the stride learning to work from a deliberately wrong default.
 
 ## 6. 2026-11-19..21: `REP STOS` in one call, and a read shadow that is rebuilt where it is read
 
-### 6a. `REP STOS` into the aperture (`d45b9b6`)
+### 6a. `REP STOS` into the aperture (`998e7fb`)
 
 A STOS site's store hook is `x86_vga_planar_stos()`, which gets the flag word
 as a fourth argument. It stores the trapping element exactly as
@@ -490,7 +490,7 @@ agree. WOLF3D clears ceiling and floor this way: 6.1% of its guest cycles,
 5,195 a run. Console, 3+3: 17.0 -> 17.6 fps mean, with a run-to-run spread as
 large as the gain.
 
-### 6b. The 0Dh read shadow, lazily (`028d8b5`)
+### 6b. The 0Dh read shadow, lazily (`66ac6f5`)
 
 **What it was.** A change of read state -- Read Map Select, read mode, colour
 compare -- rebuilt the whole 64,000-offset shadow on the spot

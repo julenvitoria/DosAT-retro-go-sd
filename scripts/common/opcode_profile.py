@@ -118,6 +118,12 @@ _TWO_BYTE = {
     0xBE: "MOVSX Gv,Eb", 0xBF: "MOVSX Gv,Ew", 0xC8: "BSWAP",
 }
 _TWO_BYTE.update({0x80 + i: f"J{_CC[i]} Jv" for i in range(16)})
+# 0F F8-FE are MMX, never implemented here, so an X86_PROFILE build reuses
+# their slots to split GRP5 (FF) by sub-op: L(GRP5_DISPATCH) relabels the open
+# slot to 0F F8+n. In such a build slot FF itself only keeps what exits early.
+_TWO_BYTE.update({0xF8 + i: f"FF /{i} {n}" for i, n in enumerate(
+    ("INC Ev", "DEC Ev", "CALL Ev", "CALLF Mp", "JMP Ev", "JMPF Mp",
+     "PUSH Ev"))})
 _TWO_BYTE.update({0x90 + i: f"SET{_CC[i]}" for i in range(16)})
 
 
@@ -230,7 +236,8 @@ def rank(profile, handlers, sort="total", include_host=False):
     for r in rows:
         r["mnemonic"] = slot_name(r["slot"])
         r["label"] = slot_label(r["slot"])
-        r["handler"] = handlers.get(r["slot"], "")
+        r["handler"] = ("L(GRP5_DISPATCH), split" if 256 + 0xF8 <= r["slot"] <= 256 + 0xFE
+                        else handlers.get(r["slot"], ""))
         r["mean"] = r["cycles"] / r["count"]
         corrected = max(0, r["cycles"] - overhead * r["count"])
         r["cycles_corrected"] = corrected

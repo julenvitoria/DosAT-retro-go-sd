@@ -18,7 +18,8 @@
       "renderer": "Mode Y (unchained 13h)",
       "rom": "references/game-and-watch-retro-go-sd/roms/dos/WOLF3D.dsk",
       "timeline": "timelines/start-preselected-game.tl",
-      "insns": 250000000,
+      "insns": 160000000,
+      "insns_reason": "Moved 250 M -> 160 M on 2026-11-24 with the IMAGE UNCHANGED: since the late-November tick and frame-loop changes the attract loop has left the title screen by 250 M (82.6%: the credits). The title is pixel-identical to this golden (0.000%) at 120, 160 and 200 M, and repeat --runs 3 at 160 M gave three identical frames. The sidecar still records the 250 M it was blessed at.",
       "tolerance": 0,
       "max_diff_pct": 0.0
     },
