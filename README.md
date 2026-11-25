@@ -28,7 +28,10 @@ Un `.dsk` es una imagen de disco con los archivos del juego dentro.
 
 **Lo más fácil: [DOS G&W Imager](https://julenvitoria.github.io/dos-gnw-imager/)**, una página web que crea el `.dsk` y
 su `.cfg` a partir de la carpeta o el `.zip` del juego. No hay que instalar
-nada y los archivos no salen de tu navegador.
+nada y los archivos no salen de tu navegador. Descargas un `.zip` que se
+descomprime en la raíz de la SD (cada archivo queda en su carpeta), y un
+botón aparte baja la última versión de `dosat.bin`, que solo hace falta poner
+una vez en `/cores/`.
 
 Desde la línea de comandos, con la carpeta del juego en el PC:
 
